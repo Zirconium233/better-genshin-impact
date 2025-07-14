@@ -2246,6 +2246,188 @@
             </StackPanel>
         </ui:CardExpander>
 
+        <!-- AI数据采集器 -->
+        <ui:CardExpander Margin="0,0,0,12" ContentPadding="0">
+            <ui:CardExpander.Icon>
+                <ui:FontIcon Glyph="&#xf1c0;" Style="{StaticResource FaFontIconStyle}" />
+            </ui:CardExpander.Icon>
+            <ui:CardExpander.Header>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ui:TextBlock Grid.Row="0"
+                                  Grid.Column="0"
+                                  FontTypography="Body"
+                                  Text="AI数据采集器"
+                                  TextWrapping="Wrap" />
+                    <ui:TextBlock Grid.Row="1"
+                                  Grid.Column="0"
+                                  Foreground="{ui:ThemeResource TextFillColorTertiaryBrush}"
+                                  TextWrapping="Wrap">
+                        采集游戏数据用于AI训练 -
+                        <Hyperlink Command="{Binding GoToDataCollectorDocCommand}">
+                            点击查看使用教程
+                        </Hyperlink>
+                    </ui:TextBlock>
+                    <controls:TwoStateButton Grid.Row="0"
+                                             Grid.RowSpan="2"
+                                             Grid.Column="1"
+                                             Margin="0,0,36,0"
+                                             DisableContent="停止"
+                                             EnableCommand="{Binding SwitchDataCollectorCommand}"
+                                             EnableContent="{Binding SwitchDataCollectorButtonText}"
+                                             IsChecked="{Binding SwitchDataCollectorEnabled}" />
+                </Grid>
+            </ui:CardExpander.Header>
+            <StackPanel>
+                <Grid Margin="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 数据集保存目录 -->
+                    <ui:TextBlock Grid.Row="0"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="数据集保存目录"
+                                  VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="0"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                Margin="0,0,36,8">
+                        <ui:TextBox MinWidth="200"
+                                    Margin="0,0,8,0"
+                                    Text="{Binding Config.DataCollectorConfig.DatasetPath, Mode=TwoWay}"
+                                    TextWrapping="Wrap" />
+                        <ui:Button Content="打开目录"
+                                   Command="{Binding OpenDatasetFolderCommand}" />
+                    </StackPanel>
+
+                    <!-- 采集频率 -->
+                    <ui:TextBlock Grid.Row="1"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="采集频率 (FPS)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="1"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="1"
+                                  Maximum="60"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.DataCollectorConfig.CollectionFps, Mode=TwoWay}" />
+
+                    <!-- 最大内存使用量 -->
+                    <ui:TextBlock Grid.Row="2"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="最大内存使用量 (MB)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="2"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="512"
+                                  Maximum="8192"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.DataCollectorConfig.MaxMemoryUsageMb, Mode=TwoWay}" />
+
+                    <!-- 截图质量 -->
+                    <ui:TextBlock Grid.Row="3"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="截图压缩质量 (1-100)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="3"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="1"
+                                  Maximum="100"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.DataCollectorConfig.ScreenshotQuality, Mode=TwoWay}" />
+
+                    <!-- 自动触发器 -->
+                    <ui:TextBlock Grid.Row="4"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="启用自动触发器"
+                                  VerticalAlignment="Center" />
+                    <ui:ToggleSwitch Grid.Row="4"
+                                     Grid.Column="1"
+                                     Margin="0,0,36,8"
+                                     IsChecked="{Binding Config.DataCollectorConfig.AutoTriggerEnabled, Mode=TwoWay}" />
+
+                    <!-- 开始触发器类型 -->
+                    <ui:TextBlock Grid.Row="5"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="开始触发器"
+                                  VerticalAlignment="Center" />
+                    <ComboBox Grid.Row="5"
+                              Grid.Column="1"
+                              Margin="0,0,36,8"
+                              MinWidth="150"
+                              ItemsSource="{Binding CollectionTriggerTypeDict}"
+                              DisplayMemberPath="Value"
+                              SelectedValuePath="Key"
+                              SelectedValue="{Binding Config.DataCollectorConfig.StartTriggerType, Mode=TwoWay}" />
+
+                    <!-- 结束触发器类型 -->
+                    <ui:TextBlock Grid.Row="6"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="结束触发器"
+                                  VerticalAlignment="Center" />
+                    <ComboBox Grid.Row="6"
+                              Grid.Column="1"
+                              Margin="0,0,36,8"
+                              MinWidth="150"
+                              ItemsSource="{Binding CollectionTriggerTypeDict}"
+                              DisplayMemberPath="Value"
+                              SelectedValuePath="Key"
+                              SelectedValue="{Binding Config.DataCollectorConfig.EndTriggerType, Mode=TwoWay}" />
+
+                    <!-- 其他选项 -->
+                    <StackPanel Grid.Row="7"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="2"
+                                Orientation="Horizontal"
+                                Margin="0,8,36,0">
+                        <ui:ToggleSwitch Margin="0,0,16,0"
+                                         Content="保存原始截图"
+                                         IsChecked="{Binding Config.DataCollectorConfig.SaveRawScreenshots, Mode=TwoWay}" />
+                        <ui:ToggleSwitch Margin="0,0,16,0"
+                                         Content="游戏失焦时停止"
+                                         IsChecked="{Binding Config.DataCollectorConfig.StopOnGameUnfocused, Mode=TwoWay}" />
+                        <ui:ToggleSwitch Margin="0,0,16,0"
+                                         Content="调试模式"
+                                         IsChecked="{Binding Config.DataCollectorConfig.DebugMode, Mode=TwoWay}" />
+                        <ui:ToggleSwitch Content="采集无动作帧"
+                                         IsChecked="{Binding Config.DataCollectorConfig.CollectNoActionFrames, Mode=TwoWay}" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </ui:CardExpander>
+
         <!--<ui:CardExpander Margin="0,0,0,12" ContentPadding="0" Icon="{ui:SymbolIcon Accessibility24}">
             <ui:CardExpander.Header>
                 <Grid>

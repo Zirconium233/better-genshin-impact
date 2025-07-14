@@ -37,6 +37,7 @@ using BetterGenshinImpact.GameTask.AutoStygianOnslaught;
 using BetterGenshinImpact.View.Windows;
 using BetterGenshinImpact.GameTask.GetGridIcons;
 using BetterGenshinImpact.GameTask.Model.GameUI;
+using BetterGenshinImpact.GameTask.DataCollector;
 
 namespace BetterGenshinImpact.ViewModel.Pages;
 
@@ -163,6 +164,23 @@ public partial class TaskSettingsPageViewModel : ViewModel
     [ObservableProperty]
     private FrozenDictionary<Enum, string> _gridNameDict = Enum.GetValues(typeof(GridScreenName))
         .Cast<GridScreenName>()
+        .ToFrozenDictionary(
+            e => (Enum)e,
+            e => e.GetType()
+                .GetField(e.ToString())?
+                .GetCustomAttribute<DescriptionAttribute>()?
+                .Description ?? e.ToString());
+
+    // AI数据采集器相关属性
+    [ObservableProperty]
+    private bool _switchDataCollectorEnabled;
+
+    [ObservableProperty]
+    private string _switchDataCollectorButtonText = "启动";
+
+    [ObservableProperty]
+    private FrozenDictionary<Enum, string> _collectionTriggerTypeDict = Enum.GetValues(typeof(CollectionTriggerType))
+        .Cast<CollectionTriggerType>()
         .ToFrozenDictionary(
             e => (Enum)e,
             e => e.GetType()
@@ -546,5 +564,49 @@ public partial class TaskSettingsPageViewModel : ViewModel
         }
 
         Process.Start("explorer.exe", path);
+    }
+
+    // AI数据采集器相关命令
+    [RelayCommand]
+    private async Task OnSwitchDataCollector()
+    {
+        try
+        {
+            SwitchDataCollectorEnabled = true;
+            SwitchDataCollectorButtonText = "采集中...";
+
+            var param = new DataCollectorParam();
+            param.SetDefault();
+
+            await new TaskRunner()
+                .RunSoloTaskAsync(new DataCollectorTask(param));
+        }
+        catch (Exception e)
+        {
+            Toast.Error($"数据采集失败: {e.Message}");
+        }
+        finally
+        {
+            SwitchDataCollectorEnabled = false;
+            SwitchDataCollectorButtonText = "启动";
+        }
+    }
+
+    [RelayCommand]
+    private void OnOpenDatasetFolder()
+    {
+        var path = Global.Absolute(Config.DataCollectorConfig.DatasetPath);
+        if (!Directory.Exists(path))
+        {
+            Directory.CreateDirectory(path);
+        }
+
+        Process.Start("explorer.exe", path);
+    }
+
+    [RelayCommand]
+    private async Task OnGoToDataCollectorDocAsync()
+    {
+        await Launcher.LaunchUriAsync(new Uri("https://github.com/babalae/better-genshin-impact"));
     }
 }
