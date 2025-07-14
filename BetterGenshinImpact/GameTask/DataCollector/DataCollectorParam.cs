@@ -22,12 +22,12 @@ public class DataCollectorParam : BaseTaskParam
     /// <summary>
     /// 采集频率 (FPS)
     /// </summary>
-    public int CollectionFps { get; set; } = 20;
+    public int CollectionFps { get; set; } = 10;
 
     /// <summary>
     /// 最大内存使用量 (MB)
     /// </summary>
-    public int MaxMemoryUsageMb { get; set; } = 1024;
+    public int MaxMemoryUsageMb { get; set; } = 4096;
 
     /// <summary>
     /// 是否保存原始截图

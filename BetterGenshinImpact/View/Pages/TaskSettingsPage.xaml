@@ -2275,14 +2275,25 @@
                             点击查看使用教程
                         </Hyperlink>
                     </ui:TextBlock>
-                    <controls:TwoStateButton Grid.Row="0"
-                                             Grid.RowSpan="2"
-                                             Grid.Column="1"
-                                             Margin="0,0,36,0"
-                                             DisableContent="停止"
-                                             EnableCommand="{Binding SwitchDataCollectorCommand}"
-                                             EnableContent="{Binding SwitchDataCollectorButtonText}"
-                                             IsChecked="{Binding SwitchDataCollectorEnabled}" />
+                    <StackPanel Grid.Row="0"
+                                Grid.RowSpan="2"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                Margin="0,0,36,0">
+                        <controls:TwoStateButton Margin="0,0,8,0"
+                                                 DisableContent="停止"
+                                                 DisableCommand="{Binding SwitchDataCollectorCommand}"
+                                                 EnableCommand="{Binding SwitchDataCollectorCommand}"
+                                                 EnableContent="{Binding SwitchDataCollectorButtonText}"
+                                                 IsChecked="{Binding SwitchDataCollectorEnabled}" />
+                        <ui:Button Content="{Binding DataCollectorActionButtonText}"
+                                   Command="{Binding DataCollectorActionCommand}"
+                                   IsEnabled="{Binding DataCollectorActionButtonEnabled}"
+                                   Margin="0,0,8,0" />
+                        <ui:TextBlock Text="{Binding DataCollectorStatusText}"
+                                      VerticalAlignment="Center"
+                                      Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
                 </Grid>
             </ui:CardExpander.Header>
             <StackPanel>
@@ -2421,8 +2432,11 @@
                         <ui:ToggleSwitch Margin="0,0,16,0"
                                          Content="调试模式"
                                          IsChecked="{Binding Config.DataCollectorConfig.DebugMode, Mode=TwoWay}" />
-                        <ui:ToggleSwitch Content="采集无动作帧"
+                        <ui:ToggleSwitch Margin="0,0,16,0"
+                                         Content="采集无动作帧"
                                          IsChecked="{Binding Config.DataCollectorConfig.CollectNoActionFrames, Mode=TwoWay}" />
+                        <ui:ToggleSwitch Content="采集结构化状态"
+                                         IsChecked="{Binding Config.DataCollectorConfig.CollectStructuredState, Mode=TwoWay}" />
                     </StackPanel>
                 </Grid>
             </StackPanel>

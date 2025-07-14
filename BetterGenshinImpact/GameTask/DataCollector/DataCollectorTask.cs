@@ -1,5 +1,8 @@
 using BetterGenshinImpact.Core.Config;
+using BetterGenshinImpact.Core.Recognition;
+using BetterGenshinImpact.Core.Recognition.OCR;
 using BetterGenshinImpact.Core.Recognition.OpenCv;
+using BetterGenshinImpact.Core.Simulator;
 using BetterGenshinImpact.GameTask.Common;
 using BetterGenshinImpact.GameTask.DataCollector.Model;
 using BetterGenshinImpact.Helpers;
@@ -14,8 +17,19 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using static Vanara.PInvoke.User32;
 
 namespace BetterGenshinImpact.GameTask.DataCollector;
+
+/// <summary>
+/// 数据采集器状态
+/// </summary>
+public enum DataCollectorState
+{
+    Stopped,        // 已停止
+    WaitingTrigger, // 等待触发器
+    Collecting      // 采集中
+}
 
 /// <summary>
 /// AI数据采集器任务
@@ -31,15 +45,19 @@ public class DataCollectorTask : ISoloTask
     private readonly StateExtractor _stateExtractor;
     private readonly List<DataRecord> _dataBuffer = new();
     private readonly object _bufferLock = new();
-    
+
     private CancellationToken _ct;
+    private CancellationTokenSource? _internalCts;
     private Timer? _collectionTimer;
+    private Timer? _triggerCheckTimer;
     private int _frameIndex = 0;
     private long _sessionStartTime;
     private string _sessionPath = string.Empty;
     private string _framesPath = string.Empty;
     private long _lastNoActionFrameTime = 0;
-    private bool _isCollecting = false;
+    private DataCollectorState _currentState = DataCollectorState.Stopped;
+    private readonly object _stateLock = new();
+    private volatile bool _stopRequested = false;
 
     public DataCollectorTask(DataCollectorParam taskParam)
     {
@@ -52,12 +70,22 @@ public class DataCollectorTask : ISoloTask
     public async Task Start(CancellationToken ct)
     {
         _ct = ct;
+        _internalCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _logger.LogInformation("启动AI数据采集器");
 
         try
         {
             await InitializeSession();
-            await StartCollection();
+
+            // 根据配置决定启动模式
+            if (_config.AutoTriggerEnabled)
+            {
+                await StartTriggerMode();
+            }
+            else
+            {
+                await StartManualMode();
+            }
         }
         catch (OperationCanceledException)
         {
@@ -71,6 +99,127 @@ public class DataCollectorTask : ISoloTask
         finally
         {
             await Cleanup();
+        }
+    }
+
+    /// <summary>
+    /// 请求停止数据采集
+    /// </summary>
+    public void RequestStop()
+    {
+        _logger.LogInformation("请求停止数据采集");
+        _stopRequested = true;
+        _internalCts?.Cancel();
+        SetState(DataCollectorState.Stopped);
+    }
+
+    /// <summary>
+    /// 获取当前状态
+    /// </summary>
+    public DataCollectorState GetCurrentState()
+    {
+        lock (_stateLock)
+        {
+            return _currentState;
+        }
+    }
+
+    /// <summary>
+    /// 手动开始采集
+    /// </summary>
+    public void StartCollectionManually()
+    {
+        lock (_stateLock)
+        {
+            if (_currentState == DataCollectorState.WaitingTrigger)
+            {
+                SetState(DataCollectorState.Collecting);
+                StartDataCollection();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 手动停止采集
+    /// </summary>
+    public void StopCollectionManually()
+    {
+        lock (_stateLock)
+        {
+            if (_currentState == DataCollectorState.Collecting)
+            {
+                StopDataCollection();
+                if (_config.AutoTriggerEnabled)
+                {
+                    SetState(DataCollectorState.WaitingTrigger);
+                }
+                else
+                {
+                    SetState(DataCollectorState.Stopped);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 设置状态
+    /// </summary>
+    private void SetState(DataCollectorState newState)
+    {
+        lock (_stateLock)
+        {
+            var oldState = _currentState;
+            _currentState = newState;
+            _logger.LogInformation("数据采集器状态变更: {OldState} -> {NewState}", oldState, newState);
+        }
+    }
+
+    /// <summary>
+    /// 启动触发器模式
+    /// </summary>
+    private async Task StartTriggerMode()
+    {
+        SetState(DataCollectorState.WaitingTrigger);
+        await InitializeSession();
+
+        // 启动触发器检查定时器 - 优化为500ms间隔以减少CPU占用
+        _triggerCheckTimer = new Timer(CheckTriggers, null, 0, 500); // 每500ms检查一次触发器
+        _logger.LogInformation("触发器模式已启动，等待触发器触发");
+
+        // 等待取消信号
+        while (!_ct.IsCancellationRequested && !_stopRequested)
+        {
+            await Task.Delay(1000, _ct);
+
+            // 检查游戏是否失焦
+            if (_config.StopOnGameUnfocused && !SystemControl.IsGenshinImpactActive())
+            {
+                _logger.LogInformation("游戏失焦，停止数据采集");
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 启动手动模式
+    /// </summary>
+    private async Task StartManualMode()
+    {
+        SetState(DataCollectorState.WaitingTrigger);
+        await InitializeSession();
+        _logger.LogInformation("手动模式已启动，等待手动开始采集");
+
+        // 等待取消信号
+        while (!_ct.IsCancellationRequested && !_stopRequested)
+        {
+            await Task.Delay(1000, _ct);
+
+            // 检查游戏是否失焦
+            if (_config.StopOnGameUnfocused && !SystemControl.IsGenshinImpactActive())
+            {
+                _logger.LogInformation("游戏失焦，停止数据采集");
+                break;
+            }
         }
     }
 
@@ -108,31 +257,195 @@ public class DataCollectorTask : ISoloTask
     }
 
     /// <summary>
+    /// 检查触发器
+    /// </summary>
+    private void CheckTriggers(object? state)
+    {
+        if (_ct.IsCancellationRequested || _stopRequested)
+            return;
+
+        try
+        {
+            lock (_stateLock)
+            {
+                if (_currentState == DataCollectorState.WaitingTrigger)
+                {
+                    if (CheckStartTrigger())
+                    {
+                        SetState(DataCollectorState.Collecting);
+                        StartDataCollection();
+                    }
+                }
+                else if (_currentState == DataCollectorState.Collecting)
+                {
+                    if (CheckEndTrigger())
+                    {
+                        StopDataCollection();
+                        SetState(DataCollectorState.WaitingTrigger);
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "触发器检查过程中发生异常");
+        }
+    }
+
+    /// <summary>
+    /// 检查开始触发器
+    /// </summary>
+    private bool CheckStartTrigger()
+    {
+        return _config.StartTriggerType switch
+        {
+            CollectionTriggerType.Manual => false, // 手动模式不自动触发
+            CollectionTriggerType.DomainStart => CheckDomainStart(),
+            CollectionTriggerType.CombatStart => CheckCombatStart(),
+            CollectionTriggerType.GameFocused => SystemControl.IsGenshinImpactActive(),
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// 检查结束触发器
+    /// </summary>
+    private bool CheckEndTrigger()
+    {
+        return _config.EndTriggerType switch
+        {
+            CollectionTriggerType.Manual => false, // 手动模式不自动停止
+            CollectionTriggerType.DomainReward => CheckDomainReward(),
+            CollectionTriggerType.CombatEnd => CheckCombatEnd(),
+            CollectionTriggerType.GameUnfocused => !SystemControl.IsGenshinImpactActive(),
+            _ => false
+        };
+    }
+
+    /// <summary>
     /// 开始数据采集
     /// </summary>
-    private async Task StartCollection()
+    private void StartDataCollection()
     {
-        _isCollecting = true;
         var collectionInterval = 1000 / _taskParam.CollectionFps; // 毫秒
-        
+
         _collectionTimer = new Timer(CollectFrame, null, 0, collectionInterval);
-        _logger.LogInformation("数据采集已启动, FPS: {Fps}, 间隔: {Interval}ms", 
+        _logger.LogInformation("数据采集已启动, FPS: {Fps}, 间隔: {Interval}ms",
             _taskParam.CollectionFps, collectionInterval);
+    }
 
-        // 等待取消信号或游戏失焦
-        while (!_ct.IsCancellationRequested && _isCollecting)
+    /// <summary>
+    /// 停止数据采集
+    /// </summary>
+    private void StopDataCollection()
+    {
+        _collectionTimer?.Dispose();
+        _collectionTimer = null;
+        _logger.LogInformation("数据采集已停止");
+    }
+
+    /// <summary>
+    /// 检查秘境开始 - 检测"启动"按钮并自动按F键进入
+    /// 优化版本：缩小检测区域以提高性能
+    /// </summary>
+private bool CheckDomainStart()
+{
+    try
+    {
+        using var imageRegion = TaskControl.CaptureToRectArea();
+
+        // 根据图片估计"启动"文本位置，设计更精确的检测区域
+        var searchX = imageRegion.Width * 0.5; // 从屏幕中间开始
+        var searchY = imageRegion.Height * 0.55; // 从屏幕中下部开始
+        var searchWidth = imageRegion.Width * 0.2; // 范围覆盖到右侧，稍微扩大以应对不同分辨率
+        var searchHeight = imageRegion.Height * 0.1; // 范围覆盖到下方
+
+        // 确保搜索区域不超出屏幕范围
+        searchX = Math.Max(0, searchX);
+        searchY = Math.Max(0, searchY);
+        searchWidth = Math.Min(imageRegion.Width - searchX, searchWidth);
+        searchHeight = Math.Min(imageRegion.Height - searchY, searchHeight);
+
+        var ocrList = imageRegion.FindMulti(RecognitionObject.Ocr(
+            (int)searchX, (int)searchY, (int)searchWidth, (int)searchHeight));
+        var startChallengeFound = ocrList.Any(ocr => ocr.Text.Contains("启动"));
+
+        if (startChallengeFound)
         {
-            await Task.Delay(1000, _ct);
-            
-            // 检查游戏是否失焦
-            if (_config.StopOnGameUnfocused && !SystemControl.IsGenshinImpactActive())
-            {
-                _logger.LogInformation("游戏失焦，停止数据采集");
-                break;
-            }
+            _logger.LogInformation("检测到启动按钮，自动按F键进入秘境");
+            // Simulation.SendInput.Keyboard.KeyPress(VK.VK_F);
+            return true;
+        }
 
-            // 检查内存使用量
-            CheckMemoryUsage();
+        return false;
+    }
+    catch (Exception e)
+    {
+        _logger.LogDebug(e, "秘境开始检测失败");
+        return false;
+    }
+}
+
+    /// <summary>
+    /// 检查战斗开始 - 使用快速检测方法
+    /// </summary>
+    private bool CheckCombatStart()
+    {
+        try
+        {
+            using var imageRegion = TaskControl.CaptureToRectArea();
+            // 使用轻量级的战斗检测，避免完整状态提取
+            return _stateExtractor.IsInCombat(imageRegion);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 检查秘境奖励 - 复用AutoDomain的检测逻辑
+    /// </summary>
+    private bool CheckDomainReward()
+    {
+        try
+        {
+            using var imageRegion = TaskControl.CaptureToRectArea();
+
+            // 检测石化古树奖励界面
+            var regionList = imageRegion.FindMulti(RecognitionObject.Ocr(
+                imageRegion.Width * 0.25, imageRegion.Height * 0.2,
+                imageRegion.Width * 0.5, imageRegion.Height * 0.6));
+            var hasTreeReward = regionList.Any(t => t.Text.Contains("石化古树"));
+
+            // 检测挑战完成提示
+            var endTipsRect = imageRegion.DeriveCrop(new Rect(0, 0, imageRegion.Width, (int)(imageRegion.Height * 0.3)));
+            var endTipsText = OcrFactory.Paddle.Ocr(endTipsRect.SrcMat);
+            var hasChallengeComplete = endTipsText.Contains("挑战达成") || endTipsText.Contains("挑战完成");
+
+            return hasTreeReward || hasChallengeComplete;
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "秘境奖励检测失败");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 检查战斗结束 - 优化版本，避免完整状态提取
+    /// </summary>
+    private bool CheckCombatEnd()
+    {
+        try
+        {
+            using var imageRegion = TaskControl.CaptureToRectArea();
+            // 使用轻量级的战斗检测，避免完整状态提取
+            return !_stateExtractor.IsInCombat(imageRegion);
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -141,16 +454,22 @@ public class DataCollectorTask : ISoloTask
     /// </summary>
     private void CollectFrame(object? state)
     {
-        if (!_isCollecting || _ct.IsCancellationRequested)
-            return;
+        // 检查是否正在采集
+        lock (_stateLock)
+        {
+            if (_currentState != DataCollectorState.Collecting || _ct.IsCancellationRequested || _stopRequested)
+                return;
+        }
+
+        var frameStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         try
         {
             using var imageRegion = TaskControl.CaptureToRectArea();
-            
+
             // 检测玩家动作
             var playerAction = _inputMonitor.DetectPlayerAction();
-            
+
             // 检查是否需要采集无动作帧
             var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (playerAction == null && !_taskParam.CollectNoActionFrames)
@@ -163,8 +482,46 @@ public class DataCollectorTask : ISoloTask
                 _lastNoActionFrameTime = currentTime;
             }
 
-            // 提取结构化状态
-            var structuredState = _stateExtractor.ExtractStructuredState(imageRegion);
+            // 提取结构化状态（可选，根据配置决定）
+            StructuredState? structuredState = null;
+            if (_config.CollectStructuredState)
+            {
+                var extractStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                // 根据配置选择提取选项，默认只提取基本信息
+                var extractionOptions = StateExtractionOptions.Default;
+                if (_config.CollectPlayerTeam)
+                {
+                    extractionOptions.ExtractPlayerTeam = true;
+                }
+                if (_config.CollectEnemies)
+                {
+                    extractionOptions.ExtractEnemies = true;
+                }
+                if (_config.CollectCombatEvents)
+                {
+                    extractionOptions.ExtractCombatEvents = true;
+                }
+
+                structuredState = _stateExtractor.ExtractStructuredState(imageRegion, extractionOptions);
+                var extractTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - extractStartTime;
+
+                // 检查处理时间是否过长
+                var frameInterval = 1000 / _taskParam.CollectionFps;
+                if (extractTime > frameInterval * 0.8)
+                {
+                    _logger.LogWarning("状态提取耗时过长: {ExtractTime}ms, 帧间隔: {FrameInterval}ms, 建议禁用部分检测功能",
+                        extractTime, frameInterval);
+
+                    // 如果处理时间超过帧间隔的80%，自动停止采集
+                    if (extractTime > frameInterval)
+                    {
+                        _logger.LogError("状态提取耗时超过帧间隔，自动停止数据采集");
+                        StopCollectionManually();
+                        return;
+                    }
+                }
+            }
 
             // 保存截图
             var framePath = SaveScreenshot(imageRegion.SrcMat);
@@ -177,7 +534,7 @@ public class DataCollectorTask : ISoloTask
                 TimeOffsetMs = currentTime - _sessionStartTime,
                 FramePath = framePath,
                 PlayerAction = playerAction,
-                StructuredState = structuredState
+                StructuredState = structuredState ?? new StructuredState()
             };
 
             // 添加到缓冲区
@@ -186,9 +543,15 @@ public class DataCollectorTask : ISoloTask
                 _dataBuffer.Add(dataRecord);
             }
 
-            if (_taskParam.DebugMode && _frameIndex % 100 == 0)
+            // 定期检查内存使用量 (每100帧检查一次)
+            if (_frameIndex % 100 == 0)
             {
-                _logger.LogDebug("已采集 {FrameCount} 帧数据", _frameIndex);
+                CheckMemoryUsage();
+
+                if (_taskParam.DebugMode)
+                {
+                    _logger.LogDebug("已采集 {FrameCount} 帧数据", _frameIndex);
+                }
             }
         }
         catch (Exception e)
@@ -277,10 +640,18 @@ public class DataCollectorTask : ISoloTask
     private async Task Cleanup()
     {
         _logger.LogInformation("开始清理资源");
-        
-        _isCollecting = false;
+
+        // 停止所有定时器
         _collectionTimer?.Dispose();
+        _triggerCheckTimer?.Dispose();
         _inputMonitor?.Dispose();
+
+        // 清理内部取消令牌源
+        _internalCts?.Dispose();
+        _internalCts = null;
+
+        // 设置状态为停止
+        SetState(DataCollectorState.Stopped);
 
         // 保存数据到文件
         if (_dataBuffer.Count > 0)
@@ -312,7 +683,7 @@ public class DataCollectorTask : ISoloTask
             List<DataRecord> tempBuffer;
             lock (_bufferLock)
             {
-                tempBuffer = new List<DataRecord>(_dataBuffer);
+                tempBuffer = [.. _dataBuffer];
             }
 
             foreach (var record in tempBuffer)

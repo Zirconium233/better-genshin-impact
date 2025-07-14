@@ -24,9 +24,6 @@ public class InputMonitor : IDisposable
     private readonly object _lockObject = new();
     private bool _disposed = false;
     private IKeyboardMouseEvents? _globalHook;
-    private int _lastMouseX = 0;
-    private int _lastMouseY = 0;
-    private bool _isFirstMouseMove = true;
 
     public InputMonitor()
     {
@@ -51,6 +48,9 @@ public class InputMonitor : IDisposable
     /// </summary>
     private void InitializeKeyMapping()
     {
+        // 从配置中获取键位映射
+        var keyConfig = TaskContext.Instance().Config.KeyBindingsConfig;
+
         // 创建KeyId到Keys的映射（简化处理，使用默认键位）
         _keyToActionMap[Keys.W] = GIActions.MoveForward;
         _keyToActionMap[Keys.S] = GIActions.MoveBackward;
@@ -59,7 +59,6 @@ public class InputMonitor : IDisposable
         _keyToActionMap[Keys.LShiftKey] = GIActions.SprintKeyboard;
         _keyToActionMap[Keys.RShiftKey] = GIActions.SprintKeyboard;
         _keyToActionMap[Keys.LButton] = GIActions.NormalAttack;
-        _keyToActionMap[Keys.RButton] = GIActions.SwitchAimingMode; // 右键瞄准模式
         _keyToActionMap[Keys.E] = GIActions.ElementalSkill;
         _keyToActionMap[Keys.Q] = GIActions.ElementalBurst;
         _keyToActionMap[Keys.Space] = GIActions.Jump;
@@ -154,31 +153,13 @@ public class InputMonitor : IDisposable
     {
         lock (_lockObject)
         {
-            // 计算相对移动量
-            if (_isFirstMouseMove)
+            // 计算相对移动量（这里简化处理）
+            _mouseMovements.Enqueue(new MouseMovement
             {
-                _lastMouseX = e.X;
-                _lastMouseY = e.Y;
-                _isFirstMouseMove = false;
-                return;
-            }
-
-            var deltaX = e.X - _lastMouseX;
-            var deltaY = e.Y - _lastMouseY;
-
-            // 只有移动量不为0时才记录
-            if (deltaX != 0 || deltaY != 0)
-            {
-                _mouseMovements.Enqueue(new MouseMovement
-                {
-                    DeltaX = deltaX,
-                    DeltaY = deltaY,
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                });
-
-                _lastMouseX = e.X;
-                _lastMouseY = e.Y;
-            }
+                DeltaX = e.X,
+                DeltaY = e.Y,
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
 
             // 保持队列大小
             while (_mouseMovements.Count > 100)
@@ -266,12 +247,6 @@ public class InputMonitor : IDisposable
             switch (evt.Action)
             {
                 case GIActions.NormalAttack:
-                    // 检查是否长按左键进行重击
-                    if (IsActionPressed(GIActions.NormalAttack) &&
-                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - evt.Timestamp > 500)
-                    {
-                        return CharacterActionEnum.CHARGED_ATTACK;
-                    }
                     return CharacterActionEnum.NORMAL_ATTACK;
                 case GIActions.ElementalSkill:
                     // 检查是否长按E键
@@ -311,7 +286,7 @@ public class InputMonitor : IDisposable
             var recentMovements = _mouseMovements.Where(m => 
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - m.Timestamp < 100).ToList();
 
-            if (recentMovements.Count > 0)
+            if (recentMovements.Any())
             {
                 cameraControl.YawDelta = recentMovements.Sum(m => m.DeltaX);
                 cameraControl.PitchDelta = recentMovements.Sum(m => m.DeltaY);

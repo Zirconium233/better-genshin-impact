@@ -20,6 +20,7 @@ using System.Threading.Tasks;
 using BetterGenshinImpact.GameTask.AutoTrackPath;
 using BetterGenshinImpact.GameTask.AutoArtifactSalvage;
 using BetterGenshinImpact.GameTask.AutoStygianOnslaught;
+using BetterGenshinImpact.GameTask.DataCollector;
 using BetterGenshinImpact.GameTask.GetGridIcons;
 
 namespace BetterGenshinImpact.Core.Config;
@@ -228,6 +229,11 @@ public partial class AllConfig : ObservableObject
     /// </summary>
     public HttpServerConfig HttpServerConfig { get; set; } = new();
 
+    /// <summary>
+    /// AI数据采集器配置
+    /// </summary>
+    public DataCollectorConfig DataCollectorConfig { get; set; } = new();
+
     [JsonIgnore]
     public Action? OnAnyChangedAction { get; set; }
 
@@ -259,6 +265,7 @@ public partial class AllConfig : ObservableObject
         DevConfig.PropertyChanged += OnAnyPropertyChanged;
         HardwareAccelerationConfig.PropertyChanged += OnAnyPropertyChanged;
         HttpServerConfig.PropertyChanged += OnAnyPropertyChanged;
+        DataCollectorConfig.PropertyChanged += OnAnyPropertyChanged;
     }
 
     public void OnAnyPropertyChanged(object? sender, EventArgs args)

@@ -179,6 +179,15 @@ public partial class TaskSettingsPageViewModel : ViewModel
     private string _switchDataCollectorButtonText = "启动";
 
     [ObservableProperty]
+    private string _dataCollectorStatusText = "已停止";
+
+    [ObservableProperty]
+    private string _dataCollectorActionButtonText = "开始采集";
+
+    [ObservableProperty]
+    private bool _dataCollectorActionButtonEnabled = false;
+
+    [ObservableProperty]
     private FrozenDictionary<Enum, string> _collectionTriggerTypeDict = Enum.GetValues(typeof(CollectionTriggerType))
         .Cast<CollectionTriggerType>()
         .ToFrozenDictionary(
@@ -187,6 +196,9 @@ public partial class TaskSettingsPageViewModel : ViewModel
                 .GetField(e.ToString())?
                 .GetCustomAttribute<DescriptionAttribute>()?
                 .Description ?? e.ToString());
+
+    private DataCollectorTask? _currentDataCollectorTask;
+    private CancellationTokenSource? _dataCollectorCts;
 
     public TaskSettingsPageViewModel(IConfigService configService, INavigationService navigationService, TaskTriggerDispatcher taskTriggerDispatcher)
     {
@@ -572,24 +584,215 @@ public partial class TaskSettingsPageViewModel : ViewModel
     {
         try
         {
-            SwitchDataCollectorEnabled = true;
-            SwitchDataCollectorButtonText = "采集中...";
+            if (_currentDataCollectorTask == null)
+            {
+                // 启动数据采集器
+                SwitchDataCollectorEnabled = true;
+                SwitchDataCollectorButtonText = "停止";
+                DataCollectorStatusText = "等待触发器";
+                DataCollectorActionButtonEnabled = true;
+                UpdateDataCollectorActionButton();
 
-            var param = new DataCollectorParam();
-            param.SetDefault();
+                var param = new DataCollectorParam();
+                param.SetDefault();
 
-            await new TaskRunner()
-                .RunSoloTaskAsync(new DataCollectorTask(param));
+                _currentDataCollectorTask = new DataCollectorTask(param);
+                _dataCollectorCts = new CancellationTokenSource();
+
+                // 在后台运行任务
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _currentDataCollectorTask.Start(_dataCollectorCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        UIDispatcherHelper.Invoke(() =>
+                        {
+                            Toast.Information("数据采集已停止");
+                        });
+                    }
+                    catch (Exception e)
+                    {
+                        UIDispatcherHelper.Invoke(() =>
+                        {
+                            Toast.Error($"数据采集失败: {e.Message}");
+                        });
+                    }
+                    finally
+                    {
+                        // 无论任务如何结束，都重置UI状态
+                        UIDispatcherHelper.Invoke(() =>
+                        {
+                            ResetDataCollectorUI();
+                        });
+                    }
+                });
+
+                // 启动状态监控
+                StartDataCollectorStatusMonitoring();
+            }
+            else
+            {
+                // 停止数据采集器
+                if (_currentDataCollectorTask != null)
+                {
+                    try
+                    {
+                        Debug.WriteLine("用户请求停止数据采集器");
+                        _currentDataCollectorTask.RequestStop();
+                        _dataCollectorCts?.Cancel();
+
+                        // UI会在任务结束后自动重置
+                        Toast.Information("正在停止数据采集...");
+                    }
+                    catch (Exception ex)
+                    {
+                        Toast.Error($"停止数据采集失败: {ex.Message}");
+                        ResetDataCollectorUI();
+                    }
+                }
+                else
+                {
+                    ResetDataCollectorUI();
+                }
+            }
         }
         catch (Exception e)
         {
-            Toast.Error($"数据采集失败: {e.Message}");
+            Toast.Error($"数据采集器操作失败: {e.Message}");
+            ResetDataCollectorUI();
         }
-        finally
+    }
+
+    [RelayCommand]
+    private void OnDataCollectorAction()
+    {
+        if (_currentDataCollectorTask == null) return;
+
+        try
         {
-            SwitchDataCollectorEnabled = false;
-            SwitchDataCollectorButtonText = "启动";
+            var currentState = _currentDataCollectorTask.GetCurrentState();
+            if (currentState == DataCollectorState.WaitingTrigger)
+            {
+                _currentDataCollectorTask.StartCollectionManually();
+                // 立即更新UI状态
+                UpdateDataCollectorActionButton();
+            }
+            else if (currentState == DataCollectorState.Collecting)
+            {
+                _currentDataCollectorTask.StopCollectionManually();
+                // 立即更新UI状态
+                UpdateDataCollectorActionButton();
+            }
         }
+        catch (Exception ex)
+        {
+            Toast.Error($"数据采集操作失败: {ex.Message}");
+            // 发生异常时重置UI
+            ResetDataCollectorUI();
+        }
+    }
+
+    private void ResetDataCollectorUI()
+    {
+        SwitchDataCollectorEnabled = false;
+        SwitchDataCollectorButtonText = "启动";
+        DataCollectorStatusText = "已停止";
+        DataCollectorActionButtonEnabled = false;
+        DataCollectorActionButtonText = "开始采集";
+
+        // 清理任务引用和取消令牌源
+        var oldTask = _currentDataCollectorTask;
+        var oldCts = _dataCollectorCts;
+        _currentDataCollectorTask = null;
+        _dataCollectorCts = null;
+
+        // 如果有旧任务，尝试清理资源
+        if (oldTask != null)
+        {
+            try
+            {
+                oldTask.RequestStop();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"清理旧数据采集任务时发生异常: {ex.Message}");
+            }
+        }
+
+        // 清理取消令牌源
+        if (oldCts != null)
+        {
+            try
+            {
+                oldCts.Cancel();
+                oldCts.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"清理取消令牌源时发生异常: {ex.Message}");
+            }
+        }
+    }
+
+    private void UpdateDataCollectorActionButton()
+    {
+        if (_currentDataCollectorTask == null)
+        {
+            DataCollectorActionButtonEnabled = false;
+            return;
+        }
+
+        var currentState = _currentDataCollectorTask.GetCurrentState();
+        switch (currentState)
+        {
+            case DataCollectorState.WaitingTrigger:
+                DataCollectorStatusText = "等待触发器";
+                DataCollectorActionButtonText = "开始采集";
+                DataCollectorActionButtonEnabled = true;
+                break;
+            case DataCollectorState.Collecting:
+                DataCollectorStatusText = "采集中";
+                DataCollectorActionButtonText = "停止采集";
+                DataCollectorActionButtonEnabled = true;
+                break;
+            case DataCollectorState.Stopped:
+                DataCollectorStatusText = "已停止";
+                DataCollectorActionButtonEnabled = false;
+                break;
+        }
+    }
+
+    private void StartDataCollectorStatusMonitoring()
+    {
+        // 每秒检查一次状态
+        var timer = new System.Timers.Timer(1000);
+        timer.Elapsed += (sender, e) =>
+        {
+            if (_currentDataCollectorTask == null)
+            {
+                timer.Stop();
+                return;
+            }
+
+            UIDispatcherHelper.Invoke(() =>
+            {
+                // 检查任务是否已经结束
+                var currentState = _currentDataCollectorTask.GetCurrentState();
+                if (currentState == DataCollectorState.Stopped)
+                {
+                    // 任务已结束，重置UI
+                    ResetDataCollectorUI();
+                    timer.Stop();
+                    return;
+                }
+
+                UpdateDataCollectorActionButton();
+            });
+        };
+        timer.Start();
     }
 
     [RelayCommand]

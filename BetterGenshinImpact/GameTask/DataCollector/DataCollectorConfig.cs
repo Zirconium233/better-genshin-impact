@@ -39,7 +39,7 @@ public partial class DataCollectorConfig : ObservableObject
     /// 数据采集频率 (FPS)
     /// </summary>
     [ObservableProperty]
-    private int _collectionFps = 20;
+    private int _collectionFps = 10;
 
     /// <summary>
     /// 最大内存使用量 (MB)
@@ -94,6 +94,30 @@ public partial class DataCollectorConfig : ObservableObject
     /// </summary>
     [ObservableProperty]
     private int _noActionFrameInterval = 500;
+
+    /// <summary>
+    /// 是否采集结构化状态（包括敌人检测等）
+    /// </summary>
+    [ObservableProperty]
+    private bool _collectStructuredState = true;
+
+    /// <summary>
+    /// 是否采集玩家队伍状态
+    /// </summary>
+    [ObservableProperty]
+    private bool _collectPlayerTeam = false;
+
+    /// <summary>
+    /// 是否采集敌人状态
+    /// </summary>
+    [ObservableProperty]
+    private bool _collectEnemies = false;
+
+    /// <summary>
+    /// 是否采集战斗事件
+    /// </summary>
+    [ObservableProperty]
+    private bool _collectCombatEvents = false;
 }
 
 /// <summary>

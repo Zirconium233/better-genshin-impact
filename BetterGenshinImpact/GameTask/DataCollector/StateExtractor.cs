@@ -16,6 +16,52 @@ using Compunet.YoloSharp;
 namespace BetterGenshinImpact.GameTask.DataCollector;
 
 /// <summary>
+/// 状态提取选项
+/// </summary>
+public class StateExtractionOptions
+{
+    /// <summary>
+    /// 是否提取玩家队伍状态
+    /// </summary>
+    public bool ExtractPlayerTeam { get; set; } = false;
+
+    /// <summary>
+    /// 是否提取敌人状态
+    /// </summary>
+    public bool ExtractEnemies { get; set; } = false;
+
+    /// <summary>
+    /// 是否提取战斗事件
+    /// </summary>
+    public bool ExtractCombatEvents { get; set; } = false;
+
+    /// <summary>
+    /// 默认选项 - 只提取基本的游戏上下文
+    /// </summary>
+    public static StateExtractionOptions Default => new();
+
+    /// <summary>
+    /// 完整选项 - 提取所有信息
+    /// </summary>
+    public static StateExtractionOptions Full => new()
+    {
+        ExtractPlayerTeam = true,
+        ExtractEnemies = true,
+        ExtractCombatEvents = true
+    };
+
+    /// <summary>
+    /// 战斗选项 - 提取战斗相关信息
+    /// </summary>
+    public static StateExtractionOptions Combat => new()
+    {
+        ExtractPlayerTeam = true,
+        ExtractEnemies = true,
+        ExtractCombatEvents = false // 战斗事件检测较慢，默认关闭
+    };
+}
+
+/// <summary>
 /// 状态提取器
 /// </summary>
 public class StateExtractor
@@ -49,26 +95,32 @@ public class StateExtractor
     /// <summary>
     /// 提取结构化状态
     /// </summary>
-    public StructuredState ExtractStructuredState(ImageRegion imageRegion)
+    public StructuredState ExtractStructuredState(ImageRegion imageRegion, StateExtractionOptions? options = null)
     {
+        options ??= StateExtractionOptions.Default;
         var state = new StructuredState();
 
         try
         {
-            // 提取游戏上下文
+            // 提取游戏上下文 - 总是提取，因为很快
             state.GameContext = ExtractGameContext(imageRegion);
 
-            // 提取玩家队伍状态
-            state.PlayerTeam = ExtractPlayerTeam(imageRegion);
+            // 根据选项决定是否提取其他信息
+            if (options.ExtractPlayerTeam)
+            {
+                state.PlayerTeam = ExtractPlayerTeam(imageRegion);
+                state.ActiveCharacterIndex = GetActiveCharacterIndex(imageRegion);
+            }
 
-            // 获取当前激活角色索引
-            state.ActiveCharacterIndex = GetActiveCharacterIndex(imageRegion);
+            if (options.ExtractEnemies)
+            {
+                state.Enemies = ExtractEnemies(imageRegion);
+            }
 
-            // 提取敌人状态
-            state.Enemies = ExtractEnemies(imageRegion);
-
-            // 提取战斗事件
-            state.CombatEvents = ExtractCombatEvents(imageRegion);
+            if (options.ExtractCombatEvents)
+            {
+                state.CombatEvents = ExtractCombatEvents(imageRegion);
+            }
         }
         catch (Exception e)
         {
@@ -76,6 +128,25 @@ public class StateExtractor
         }
 
         return state;
+    }
+
+    /// <summary>
+    /// 快速检测是否在战斗中 - 轻量级版本
+    /// </summary>
+    public bool IsInCombat(ImageRegion imageRegion)
+    {
+        try
+        {
+            // 使用最快的检测方法
+            return !Bv.IsInMainUi(imageRegion) &&
+                   !Bv.IsInBigMapUi(imageRegion) &&
+                   !Bv.IsInAnyClosableUi(imageRegion) &&
+                   !Bv.IsInTalkUi(imageRegion);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -304,102 +375,75 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 估算血量百分比 - 复用BGI的血量检测逻辑
+    /// 估算血量百分比 - 使用BGI现有的快速检测
     /// </summary>
     private float EstimateHpPercent(Avatar avatar, ImageRegion imageRegion)
     {
         try
         {
-            // 检测当前角色是否低血量
-            var isLowHp = Bv.CurrentAvatarIsLowHp(imageRegion);
-
-            // 如果是当前激活角色且检测到低血量，返回较低的血量值
-            if (avatar.IsActive(imageRegion) && isLowHp)
+            // 使用BGI现有的血量检测
+            if (Bv.CurrentAvatarIsLowHp(imageRegion))
             {
-                return 0.3f; // 低血量状态，估算为30%
+                return 0.3f; // 低血量估计为30%
             }
 
-            // 对于非激活角色或满血状态，返回默认值
-            // TODO: 可以通过OCR识别具体的血量数值
-            return avatar.IsActive(imageRegion) ? 1.0f : 0.8f;
+            // TODO: 实现更精确的血量识别逻辑
+            // 可以通过分析血条颜色和长度来估算
+            return 1.0f; // 默认满血
         }
-        catch (Exception e)
+        catch
         {
-            _logger.LogDebug(e, "血量估算失败: {AvatarName}", avatar.Name);
             return 1.0f;
         }
     }
 
     /// <summary>
-    /// 估算能量百分比 - 基于角色状态和时间估算
+    /// 估算能量百分比 - Placeholder实现
     /// </summary>
     private float EstimateEnergyPercent(Avatar avatar, ImageRegion imageRegion)
     {
         try
         {
-            // 如果是当前激活角色，可以尝试更精确的检测
-            if (avatar.IsActive(imageRegion))
-            {
-                // TODO: 可以通过识别能量球的数量来估算
-                // 目前简化处理：根据角色的爆发状态估算能量
-                if (avatar.IsBurstReady)
-                {
-                    return 1.0f; // 爆发可用，能量满
-                }
-                else
-                {
-                    // 根据技能CD状态估算能量恢复进度
-                    var skillCd = avatar.GetSkillCdSeconds();
-                    var maxSkillCd = avatar.CombatAvatar.SkillCd;
-                    if (maxSkillCd > 0)
-                    {
-                        var progress = Math.Max(0, (maxSkillCd - skillCd) / maxSkillCd);
-                        return (float)(0.3 + progress * 0.5); // 30%-80%范围
-                    }
-                    return 0.7f;
-                }
-            }
-
-            // 非激活角色返回估算值
-            return 0.6f;
+            // TODO: 复杂实现 - 需要分析能量球的颜色和数量
+            // 暂时返回默认值
+            return 0.5f;
         }
-        catch (Exception e)
+        catch
         {
-            _logger.LogDebug(e, "能量估算失败: {AvatarName}", avatar.Name);
             return 0.5f;
         }
     }
 
     /// <summary>
-    /// 估算技能冷却时间 - 复用BGI的技能CD检测
+    /// 估算技能冷却时间 - Placeholder实现
     /// </summary>
     private float EstimateSkillCooldown(Avatar avatar, ImageRegion imageRegion)
     {
         try
         {
-            // 使用BGI现有的技能CD计算方法
-            return (float)avatar.GetSkillCdSeconds();
+            // TODO: 复杂实现 - 需要OCR识别技能图标上的数字
+            // 暂时返回默认值
+            return 0.0f;
         }
-        catch (Exception e)
+        catch
         {
-            _logger.LogDebug(e, "技能CD估算失败: {AvatarName}", avatar.Name);
             return 0.0f;
         }
     }
 
     /// <summary>
-    /// 估算爆发是否可用 - 复用BGI的爆发状态检测
+    /// 估算爆发是否可用 - Placeholder实现
     /// </summary>
     private bool EstimateBurstAvailable(Avatar avatar, ImageRegion imageRegion)
     {
         try
         {
-            // 使用BGI现有的爆发状态
-            return avatar.IsBurstReady;
+            // TODO: 复杂实现 - 需要检测爆发图标的亮度和颜色
+            // 暂时返回默认值
+            return false;
         }
-        catch (Exception e)
+        catch
         {
-            _logger.LogDebug(e, "爆发可用性估算失败: {AvatarName}", avatar.Name);
             return false;
         }
     }
