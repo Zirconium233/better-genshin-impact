@@ -2284,7 +2284,7 @@
                                                  DisableContent="停止"
                                                  DisableCommand="{Binding SwitchDataCollectorCommand}"
                                                  EnableCommand="{Binding SwitchDataCollectorCommand}"
-                                                 EnableContent="{Binding SwitchDataCollectorButtonText}"
+                                                 EnableContent="启动"
                                                  IsChecked="{Binding SwitchDataCollectorEnabled}" />
                         <ui:Button Content="{Binding DataCollectorActionButtonText}"
                                    Command="{Binding DataCollectorActionCommand}"

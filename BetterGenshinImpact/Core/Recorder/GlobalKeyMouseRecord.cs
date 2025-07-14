@@ -31,6 +31,10 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
 
     public KeyMouseRecorderStatus Status { get; set; } = KeyMouseRecorderStatus.Stop;
 
+    // InputMonitor回调
+    public Action<object?, KeyEventArgs>? InputMonitorKeyDown { get; set; }
+    public Action<object?, KeyEventArgs>? InputMonitorKeyUp { get; set; }
+
     public GlobalKeyMouseRecord()
     {
         _timer.Elapsed += Tick;
@@ -140,6 +144,9 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
         }
         // Debug.WriteLine($"KeyDown: {e.KeyCode}");
         _recorder?.KeyDown(e, time);
+
+        // 通知InputMonitor
+        InputMonitorKeyDown?.Invoke(this, e);
     }
 
     public void GlobalHookKeyUp(KeyEventArgs e, uint time)
@@ -154,6 +161,9 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
             // Debug.WriteLine($"KeyUp: {e.KeyCode}");
             _keyDownState[e.KeyCode] = false;
             _recorder?.KeyUp(e, time);
+
+            // 通知InputMonitor
+            InputMonitorKeyUp?.Invoke(this, e);
         }
     }
 

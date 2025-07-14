@@ -20,9 +20,9 @@ public class DataCollectorParam : BaseTaskParam
     public string SessionId { get; set; } = string.Empty;
 
     /// <summary>
-    /// 采集频率 (FPS)
+    /// 采集频率 (FPS) - 默认5FPS，给OCR留更多时间
     /// </summary>
-    public int CollectionFps { get; set; } = 10;
+    public int CollectionFps { get; set; } = 5;
 
     /// <summary>
     /// 最大内存使用量 (MB)

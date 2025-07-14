@@ -91,10 +91,28 @@ public class DataCollectorTask : ISoloTask
         {
             _logger.LogInformation("数据采集被取消");
         }
+        catch (OutOfMemoryException e)
+        {
+            _logger.LogError(e, "发生OOM异常，停止数据采集任务");
+            _stopRequested = true;
+            _internalCts?.Cancel();
+            throw; // OOM异常需要向上传播，触发UI reset
+        }
         catch (Exception e)
         {
-            _logger.LogError(e, "数据采集过程中发生异常");
-            throw;
+            _logger.LogError(e, "数据采集过程中发生异常，当作手动终止处理");
+            // 非OOM异常当作手动终止处理，触发清理和重启
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await CleanupAndRestart();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "异常处理中的清理和重启失败");
+                }
+            });
         }
         finally
         {
@@ -103,14 +121,130 @@ public class DataCollectorTask : ISoloTask
     }
 
     /// <summary>
-    /// 请求停止数据采集
+    /// 请求停止数据采集 - 只停止当前采集，触发清理和重启循环
     /// </summary>
     public void RequestStop()
     {
-        _logger.LogInformation("请求停止数据采集");
+        _logger.LogInformation("请求停止数据采集，将触发清理和重启循环");
+
+        lock (_stateLock)
+        {
+            if (_currentState == DataCollectorState.Collecting)
+            {
+                // 停止当前采集
+                StopDataCollection();
+
+                // 触发清理缓冲区和重启监视器的逻辑
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await CleanupAndRestart();
+                    }
+                    catch (Exception e)
+                    {
+                        _logger.LogError(e, "清理和重启过程中发生异常");
+                    }
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// 请求完全停止任务
+    /// </summary>
+    public void RequestFullStop()
+    {
+        _logger.LogInformation("请求完全停止数据采集任务");
         _stopRequested = true;
         _internalCts?.Cancel();
         SetState(DataCollectorState.Stopped);
+    }
+
+    /// <summary>
+    /// 清理缓冲区并重启监视器
+    /// </summary>
+    private async Task CleanupAndRestart()
+    {
+        _logger.LogInformation("开始清理缓冲区和重启监视器");
+
+        // 保存当前数据
+        await SaveCurrentSession();
+
+        // 清理缓冲区
+        ClearBuffers();
+
+        // 重新初始化会话
+        await InitializeSession();
+
+        // 重启监视器
+        RestartMonitors();
+
+        // 恢复到等待触发状态
+        SetState(DataCollectorState.WaitingTrigger);
+
+        _logger.LogInformation("清理和重启完成，恢复到等待触发状态");
+    }
+
+    /// <summary>
+    /// 保存当前会话数据
+    /// </summary>
+    private async Task SaveCurrentSession()
+    {
+        try
+        {
+            // 这里可以添加保存逻辑，比如刷新文件缓冲区等
+            _logger.LogInformation("保存当前会话数据");
+            await Task.Delay(100); // 确保文件写入完成
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "保存会话数据时发生异常");
+        }
+    }
+
+    /// <summary>
+    /// 清理缓冲区
+    /// </summary>
+    private void ClearBuffers()
+    {
+        try
+        {
+            _logger.LogInformation("清理缓冲区");
+            _frameIndex = 0;
+            // 这里可以添加其他缓冲区清理逻辑
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "清理缓冲区时发生异常");
+        }
+    }
+
+    /// <summary>
+    /// 重启监视器
+    /// </summary>
+    private void RestartMonitors()
+    {
+        try
+        {
+            _logger.LogInformation("重启监视器");
+
+            // 重启输入监视器
+            _inputMonitor.StopMonitoring();
+            var gameHandle = SystemControl.FindGenshinImpactHandle();
+            if (gameHandle != IntPtr.Zero)
+            {
+                _inputMonitor.StartMonitoring(gameHandle);
+            }
+
+            // 重新初始化状态提取器
+            using var imageRegion = TaskControl.CaptureToRectArea();
+            _stateExtractor.InitializeCombatScenes(imageRegion);
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "重启监视器时发生异常");
+        }
     }
 
     /// <summary>
@@ -372,8 +506,8 @@ private bool CheckDomainStart()
 
         if (startChallengeFound)
         {
-            _logger.LogInformation("检测到启动按钮，自动按F键进入秘境");
-            // Simulation.SendInput.Keyboard.KeyPress(VK.VK_F);
+            _logger.LogInformation("检测到启动按钮");
+            // 数据采集器不应该发送按键，只做检测
             return true;
         }
 

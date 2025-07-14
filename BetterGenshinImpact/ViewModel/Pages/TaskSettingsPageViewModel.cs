@@ -588,7 +588,6 @@ public partial class TaskSettingsPageViewModel : ViewModel
             {
                 // 启动数据采集器
                 SwitchDataCollectorEnabled = true;
-                SwitchDataCollectorButtonText = "停止";
                 DataCollectorStatusText = "等待触发器";
                 DataCollectorActionButtonEnabled = true;
                 UpdateDataCollectorActionButton();
@@ -613,11 +612,20 @@ public partial class TaskSettingsPageViewModel : ViewModel
                             Toast.Information("数据采集已停止");
                         });
                     }
+                    catch (OutOfMemoryException e)
+                    {
+                        UIDispatcherHelper.Invoke(() =>
+                        {
+                            Toast.Error($"内存不足，数据采集已停止: {e.Message}");
+                            ResetDataCollectorUI(); // OOM异常时reset UI
+                        });
+                    }
                     catch (Exception e)
                     {
                         UIDispatcherHelper.Invoke(() =>
                         {
                             Toast.Error($"数据采集失败: {e.Message}");
+                            // 非OOM异常不reset UI，让任务继续运行
                         });
                     }
                     finally
@@ -635,17 +643,21 @@ public partial class TaskSettingsPageViewModel : ViewModel
             }
             else
             {
-                // 停止数据采集器
+                // 停止数据采集器 - 只停止采集，不停止整个任务
                 if (_currentDataCollectorTask != null)
                 {
                     try
                     {
                         Debug.WriteLine("用户请求停止数据采集器");
                         _currentDataCollectorTask.RequestStop();
-                        _dataCollectorCts?.Cancel();
 
-                        // UI会在任务结束后自动重置
-                        Toast.Information("正在停止数据采集...");
+                        // 更新UI状态为等待触发，不要reset整个UI
+                        SwitchDataCollectorEnabled = false;
+                        DataCollectorStatusText = "等待触发器";
+                        DataCollectorActionButtonEnabled = true;
+                        UpdateDataCollectorActionButton();
+
+                        Toast.Information("数据采集已停止");
                     }
                     catch (Exception ex)
                     {
@@ -698,7 +710,6 @@ public partial class TaskSettingsPageViewModel : ViewModel
     private void ResetDataCollectorUI()
     {
         SwitchDataCollectorEnabled = false;
-        SwitchDataCollectorButtonText = "启动";
         DataCollectorStatusText = "已停止";
         DataCollectorActionButtonEnabled = false;
         DataCollectorActionButtonText = "开始采集";
@@ -709,12 +720,13 @@ public partial class TaskSettingsPageViewModel : ViewModel
         _currentDataCollectorTask = null;
         _dataCollectorCts = null;
 
-        // 如果有旧任务，尝试清理资源
+        // 如果有旧任务，尝试清理资源（但不重复调用RequestStop）
         if (oldTask != null)
         {
             try
             {
-                oldTask.RequestStop();
+                // 这里不需要调用RequestStop，因为调用ResetDataCollectorUI之前已经调用过了
+                Debug.WriteLine("清理旧数据采集任务引用");
             }
             catch (Exception ex)
             {
@@ -787,6 +799,17 @@ public partial class TaskSettingsPageViewModel : ViewModel
                     ResetDataCollectorUI();
                     timer.Stop();
                     return;
+                }
+
+                // 根据状态更新UI
+                switch (currentState)
+                {
+                    case DataCollectorState.WaitingTrigger:
+                        DataCollectorStatusText = "等待触发器";
+                        break;
+                    case DataCollectorState.Collecting:
+                        DataCollectorStatusText = "正在采集";
+                        break;
                 }
 
                 UpdateDataCollectorActionButton();

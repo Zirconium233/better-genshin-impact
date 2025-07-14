@@ -1,4 +1,5 @@
 using BetterGenshinImpact.Core.Monitor;
+using BetterGenshinImpact.Core.Recorder;
 using BetterGenshinImpact.Core.Simulator.Extensions;
 using BetterGenshinImpact.GameTask.DataCollector.Model;
 using Gma.System.MouseKeyHook;
@@ -23,7 +24,7 @@ public class InputMonitor : IDisposable
     private readonly Queue<MouseMovement> _mouseMovements = new();
     private readonly object _lockObject = new();
     private bool _disposed = false;
-    private IKeyboardMouseEvents? _globalHook;
+    private bool _isMonitoring = false;
 
     public InputMonitor()
     {
@@ -69,20 +70,23 @@ public class InputMonitor : IDisposable
         _keyToActionMap[Keys.F] = GIActions.PickUpOrInteract;
         _keyToActionMap[Keys.T] = GIActions.QuickUseGadget;
         _keyToActionMap[Keys.MButton] = GIActions.SwitchAimingMode; // 中键锁定
+
+        _logger.LogInformation("按键映射已初始化，共{Count}个映射", _keyToActionMap.Count);
     }
 
     /// <summary>
-    /// 开始监控
+    /// 开始监控 - 利用现有的GlobalKeyMouseRecord系统，避免钩子冲突
     /// </summary>
     public void StartMonitoring(IntPtr gameHandle)
     {
         _logger.LogInformation("开始输入监控");
+        _isMonitoring = true;
 
-        // 使用全局钩子监控输入
-        _globalHook = Hook.GlobalEvents();
-        _globalHook.KeyDown += OnKeyDown;
-        _globalHook.KeyUp += OnKeyUp;
-        _globalHook.MouseMoveExt += OnMouseMove;
+        // 注册到现有的GlobalKeyMouseRecord系统
+        GlobalKeyMouseRecord.Instance.InputMonitorKeyDown = OnKeyDown;
+        GlobalKeyMouseRecord.Instance.InputMonitorKeyUp = OnKeyUp;
+
+        _logger.LogInformation("输入监控已注册到现有钩子系统");
     }
 
     /// <summary>
@@ -91,22 +95,20 @@ public class InputMonitor : IDisposable
     public void StopMonitoring()
     {
         _logger.LogInformation("停止输入监控");
+        _isMonitoring = false;
 
-        if (_globalHook != null)
-        {
-            _globalHook.KeyDown -= OnKeyDown;
-            _globalHook.KeyUp -= OnKeyUp;
-            _globalHook.MouseMoveExt -= OnMouseMove;
-            _globalHook.Dispose();
-            _globalHook = null;
-        }
+        // 从GlobalKeyMouseRecord系统注销
+        GlobalKeyMouseRecord.Instance.InputMonitorKeyDown = null;
+        GlobalKeyMouseRecord.Instance.InputMonitorKeyUp = null;
     }
 
     /// <summary>
     /// 按键按下事件
     /// </summary>
-    private void OnKeyDown(object? sender, KeyEventArgs e)
+    public void OnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (!_isMonitoring) return;
+
         lock (_lockObject)
         {
             // 检查是否有对应的GIAction
@@ -120,6 +122,9 @@ public class InputMonitor : IDisposable
                     Action = action,
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 });
+
+                // 添加INFO日志，表明检测到的按键和对应的Action
+                _logger.LogInformation("检测到按键: {Key} -> {Action}", e.KeyCode, action);
             }
         }
     }
@@ -127,8 +132,10 @@ public class InputMonitor : IDisposable
     /// <summary>
     /// 按键释放事件
     /// </summary>
-    private void OnKeyUp(object? sender, KeyEventArgs e)
+    public void OnKeyUp(object? sender, KeyEventArgs e)
     {
+        if (!_isMonitoring) return;
+
         lock (_lockObject)
         {
             // 检查是否有对应的GIAction
@@ -190,13 +197,19 @@ public class InputMonitor : IDisposable
                 return null;
             }
 
-            return new PlayerAction
+            var playerAction = new PlayerAction
             {
                 Movement = movement,
                 CharacterAction = characterAction,
                 CameraControl = cameraControl,
                 TargetLock = targetLock
             };
+
+            // 记录检测到的完整Action
+            _logger.LogInformation("检测到玩家动作: Movement={Movement}, CharacterAction={CharacterAction}, TargetLock={TargetLock}",
+                movement, characterAction, targetLock);
+
+            return playerAction;
         }
     }
 

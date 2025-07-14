@@ -36,10 +36,10 @@ public partial class DataCollectorConfig : ObservableObject
     private CollectionTriggerType _endTriggerType = CollectionTriggerType.DomainReward;
 
     /// <summary>
-    /// 数据采集频率 (FPS)
+    /// 数据采集频率 (FPS) - 默认5FPS，给OCR留更多时间
     /// </summary>
     [ObservableProperty]
-    private int _collectionFps = 10;
+    private int _collectionFps = 5;
 
     /// <summary>
     /// 最大内存使用量 (MB)
@@ -105,19 +105,19 @@ public partial class DataCollectorConfig : ObservableObject
     /// 是否采集玩家队伍状态
     /// </summary>
     [ObservableProperty]
-    private bool _collectPlayerTeam = false;
+    private bool _collectPlayerTeam = true; // 默认开启，只采集队伍和生命值
 
     /// <summary>
     /// 是否采集敌人状态
     /// </summary>
     [ObservableProperty]
-    private bool _collectEnemies = false;
+    private bool _collectEnemies = false; // 默认关闭，性能消耗大
 
     /// <summary>
     /// 是否采集战斗事件
     /// </summary>
     [ObservableProperty]
-    private bool _collectCombatEvents = false;
+    private bool _collectCombatEvents = false; // 默认关闭，性能消耗大
 }
 
 /// <summary>
