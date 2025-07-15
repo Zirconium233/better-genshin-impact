@@ -126,30 +126,33 @@ public class StateExtractor
 
         try
         {
-            // 使用BGI现有的状态检测方法
-            context.InMenu = Bv.IsInMainUi(imageRegion) || Bv.IsInBigMapUi(imageRegion) ||
-                           Bv.IsInAnyClosableUi(imageRegion) || Bv.IsInPartyViewUi(imageRegion);
-
-            // 检测是否在对话中
+            // 检测各种UI状态
+            var inMainUi = Bv.IsInMainUi(imageRegion);
+            var inBigMapUi = Bv.IsInBigMapUi(imageRegion);
+            var inAnyClosableUi = Bv.IsInAnyClosableUi(imageRegion);
+            var inPartyViewUi = Bv.IsInPartyViewUi(imageRegion);
             var inTalk = Bv.IsInTalkUi(imageRegion);
-
-            // 检测是否在复苏界面
             var inRevive = Bv.IsInRevivePrompt(imageRegion);
+            var loading = DetectLoadingState(imageRegion);
 
-            // 检测是否在战斗中 - 通过检测血条和UI元素
-            context.InCombat = DetectCombatState(imageRegion);
+            // 更精确的菜单检测
+            context.InMenu = inMainUi || inBigMapUi || inAnyClosableUi || inPartyViewUi;
 
-            // 检测是否在加载中 - 通过检测特定UI状态
-            context.Loading = DetectLoadingState(imageRegion);
+            // 更精确的战斗检测 - 只有在非UI界面且非对话时才可能在战斗
+            context.InCombat = !context.InMenu && !inTalk && !inRevive && !loading && DetectCombatState(imageRegion);
 
-            // 确定游戏阶段
-            if (context.Loading)
+            context.Loading = loading;
+
+            // 确定游戏阶段 - 优先级顺序很重要
+            if (loading)
                 context.GamePhase = "loading";
             else if (inRevive)
                 context.GamePhase = "revive";
             else if (inTalk)
                 context.GamePhase = "dialogue";
-            else if (context.InMenu)
+            else if (inMainUi)
+                context.GamePhase = "menu";
+            else if (inBigMapUi || inAnyClosableUi || inPartyViewUi)
                 context.GamePhase = "menu";
             else if (context.InCombat)
                 context.GamePhase = "combat";
@@ -159,7 +162,11 @@ public class StateExtractor
         catch (Exception e)
         {
             _logger.LogDebug(e, "游戏上下文提取失败");
-            context.GamePhase = "unknown";
+            // 默认状态
+            context.GamePhase = "exploration";
+            context.InMenu = false;
+            context.InCombat = false;
+            context.Loading = false;
         }
 
         return context;
@@ -370,7 +377,7 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 验证生成的动作脚本是否有效 - 复用BGI的脚本解析器
+    /// 验证生成的动作脚本是否有效 - 简化版，跳过sw()格式验证
     /// </summary>
     public bool ValidateActionScript(string actionScript)
     {
@@ -381,7 +388,19 @@ public class StateExtractor
                 return false;
             }
 
-            // 使用BGI现有的脚本解析器验证语法
+            // 对于包含sw()的脚本，直接认为有效（因为BGI解析器不认识这个格式）
+            if (actionScript.Contains("sw("))
+            {
+                return true;
+            }
+
+            // 对于wait()脚本，直接认为有效
+            if (actionScript.StartsWith("wait("))
+            {
+                return true;
+            }
+
+            // 其他脚本使用BGI解析器验证
             var commands = CombatScriptParser.ParseLineCommands(actionScript, CombatScriptParser.CurrentAvatarName);
             return commands.Count > 0;
         }

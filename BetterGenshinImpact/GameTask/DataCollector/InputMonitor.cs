@@ -71,6 +71,8 @@ public class InputMonitor : IDisposable
         // 注册到现有的GlobalKeyMouseRecord系统
         GlobalKeyMouseRecord.Instance.InputMonitorKeyDown = OnKeyDown;
         GlobalKeyMouseRecord.Instance.InputMonitorKeyUp = OnKeyUp;
+        GlobalKeyMouseRecord.Instance.InputMonitorMouseDown = OnMouseDown;
+        GlobalKeyMouseRecord.Instance.InputMonitorMouseUp = OnMouseUp;
 
         _logger.LogInformation("输入监控已注册到现有钩子系统");
     }
@@ -86,6 +88,8 @@ public class InputMonitor : IDisposable
         // 从GlobalKeyMouseRecord系统注销
         GlobalKeyMouseRecord.Instance.InputMonitorKeyDown = null;
         GlobalKeyMouseRecord.Instance.InputMonitorKeyUp = null;
+        GlobalKeyMouseRecord.Instance.InputMonitorMouseDown = null;
+        GlobalKeyMouseRecord.Instance.InputMonitorMouseUp = null;
 
         // 清理所有状态
         lock (_lockObject)
@@ -126,9 +130,8 @@ public class InputMonitor : IDisposable
                 WriteRawInputRecord(rawRecord);
 
                 // 处理按键状态 - 鲁棒性处理
-                if (_keyStates.ContainsKey(e.KeyCode))
+                if (_keyStates.TryGetValue(e.KeyCode, out var existingState))
                 {
-                    var existingState = _keyStates[e.KeyCode];
                     if (existingState.IsPressed)
                     {
                         // 异常情况：重复KeyDown，记录警告并更新时间
@@ -231,6 +234,132 @@ public class InputMonitor : IDisposable
     }
 
     /// <summary>
+    /// 鼠标按下事件 - 处理鼠标输入
+    /// </summary>
+    public void OnMouseDown(object? sender, MouseEventExtArgs e)
+    {
+        if (!_isMonitoring) return;
+
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        lock (_lockObject)
+        {
+            try
+            {
+                // 记录原始输入
+                var rawRecord = new RawInputRecord
+                {
+                    Type = "MouseDown",
+                    Button = e.Button.ToString(),
+                    Timestamp = timestamp
+                };
+                _rawInputRecords.Enqueue(rawRecord);
+                WriteRawInputRecord(rawRecord);
+
+                // 处理鼠标按钮状态
+                var buttonKey = e.Button.ToString();
+                if (_mouseStates.TryGetValue(buttonKey, out var existingState))
+                {
+                    if (existingState.IsPressed)
+                    {
+                        _logger.LogWarning("检测到重复MouseDown事件: {Button}, 上次时间: {LastTime}, 当前时间: {CurrentTime}",
+                            e.Button, existingState.PressTime, timestamp);
+                        existingState.PressTime = timestamp;
+                    }
+                    else
+                    {
+                        existingState.IsPressed = true;
+                        existingState.PressTime = timestamp;
+                    }
+                }
+                else
+                {
+                    _mouseStates[buttonKey] = new MouseButtonState
+                    {
+                        IsPressed = true,
+                        PressTime = timestamp
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "处理MouseDown事件时发生异常: {Button}", e.Button);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 鼠标释放事件 - 处理鼠标输入
+    /// </summary>
+    public void OnMouseUp(object? sender, MouseEventExtArgs e)
+    {
+        if (!_isMonitoring) return;
+
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        lock (_lockObject)
+        {
+            try
+            {
+                // 记录原始输入
+                var rawRecord = new RawInputRecord
+                {
+                    Type = "MouseUp",
+                    Button = e.Button.ToString(),
+                    Timestamp = timestamp
+                };
+                _rawInputRecords.Enqueue(rawRecord);
+                WriteRawInputRecord(rawRecord);
+
+                // 处理鼠标按钮状态和生成动作事件
+                var buttonKey = e.Button.ToString();
+                if (_mouseStates.TryGetValue(buttonKey, out var mouseState))
+                {
+                    if (mouseState.IsPressed)
+                    {
+                        var duration = timestamp - mouseState.PressTime;
+                        mouseState.IsPressed = false;
+                        mouseState.ReleasTime = timestamp;
+
+                        // 生成动作事件用于脚本生成（只处理左键）
+                        if (e.Button == MouseButtons.Left)
+                        {
+                            var actionEvent = new ActionEvent
+                            {
+                                Key = Keys.LButton,
+                                Duration = duration,
+                                StartTime = mouseState.PressTime,
+                                EndTime = timestamp,
+                                RepeatCount = 0
+                            };
+
+                            _actionEvents.Enqueue(actionEvent);
+
+                            // 保持队列大小
+                            while (_actionEvents.Count > 1000)
+                            {
+                                _actionEvents.Dequeue();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("检测到孤立的MouseUp事件: {Button}, 时间: {Time}", e.Button, timestamp);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("检测到未知的MouseUp事件: {Button}, 时间: {Time}", e.Button, timestamp);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "处理MouseUp事件时发生异常: {Button}", e.Button);
+            }
+        }
+    }
+
+    /// <summary>
     /// 写入原始输入记录到文件 - 增强容错机制
     /// </summary>
     private void WriteRawInputRecord(RawInputRecord record)
@@ -320,7 +449,7 @@ public class InputMonitor : IDisposable
     }
 
     /// <summary>
-    /// 将动作事件转换为脚本格式 - 复用BGI现有的脚本语法
+    /// 将动作事件转换为脚本格式 - 复用BGI现有的脚本语法，增加角色切换
     /// </summary>
     private static string ConvertActionEventToScript(ActionEvent evt)
     {
@@ -337,10 +466,11 @@ public class InputMonitor : IDisposable
             Keys.LButton => durationSeconds > 0.3 ? $"charge({durationSeconds:F1})" : $"attack({durationSeconds:F1})",
             Keys.Space => "jump",
             Keys.LShiftKey or Keys.RShiftKey => durationSeconds > 0.05 ? $"dash({durationSeconds:F1})" : "dash(0.1)",
-            Keys.D1 => "1",
-            Keys.D2 => "2",
-            Keys.D3 => "3",
-            Keys.D4 => "4",
+            // 角色切换 - 使用简短的sw()格式
+            Keys.D1 => "sw(1)",
+            Keys.D2 => "sw(2)",
+            Keys.D3 => "sw(3)",
+            Keys.D4 => "sw(4)",
             Keys.F => "f",
             Keys.T => "t",
             _ => string.Empty

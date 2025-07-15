@@ -34,6 +34,8 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
     // InputMonitor回调
     public Action<object?, KeyEventArgs>? InputMonitorKeyDown { get; set; }
     public Action<object?, KeyEventArgs>? InputMonitorKeyUp { get; set; }
+    public Action<object?, MouseEventExtArgs>? InputMonitorMouseDown { get; set; }
+    public Action<object?, MouseEventExtArgs>? InputMonitorMouseUp { get; set; }
 
     public GlobalKeyMouseRecord()
     {
@@ -171,12 +173,18 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
     {
         // Debug.WriteLine($"MouseDown: {e.Button}");
         _recorder?.MouseDown(e);
+
+        // 通知InputMonitor
+        InputMonitorMouseDown?.Invoke(this, e);
     }
 
     public void GlobalHookMouseUp(MouseEventExtArgs e)
     {
         // Debug.WriteLine($"MouseUp: {e.Button}");
         _recorder?.MouseUp(e);
+
+        // 通知InputMonitor
+        InputMonitorMouseUp?.Invoke(this, e);
     }
 
     public void GlobalHookMouseMoveTo(MouseEventExtArgs e)
