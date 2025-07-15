@@ -590,8 +590,9 @@ public partial class TaskSettingsPageViewModel : ViewModel
                 SwitchDataCollectorEnabled = true;
                 DataCollectorStatusText = "等待触发器";
                 DataCollectorActionButtonEnabled = true;
-                UpdateDataCollectorActionButton();
+                DataCollectorActionButtonText = "开始采集";
 
+                // 每次启动都创建新的参数对象，确保使用最新配置
                 var param = new DataCollectorParam();
                 param.SetDefault();
 
@@ -642,7 +643,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
                 _currentDataCollectorTask.RequestFullStop();
                 _dataCollectorCts?.Cancel();
 
-                // 立即重置UI到初始状态
+                // 立即重置UI到初始状态，确保下次启动时重新创建任务实例
                 ResetDataCollectorUI();
                 Toast.Information("数据采集任务已停止");
             }
@@ -655,17 +656,20 @@ public partial class TaskSettingsPageViewModel : ViewModel
     }
 
     [RelayCommand]
-    private void OnDataCollectorAction()
+    private async Task OnDataCollectorAction()
     {
         if (_currentDataCollectorTask == null) return;
 
         try
         {
+            // 每次操作前更新任务参数，确保使用最新配置
+            _currentDataCollectorTask.UpdateTaskParam();
+
             var currentState = _currentDataCollectorTask.GetCurrentState();
             if (currentState == DataCollectorState.WaitingTrigger)
             {
                 // 从等待触发状态切换到采集状态
-                _currentDataCollectorTask.RequestStop(); // 这里利用RequestStop的逻辑，它会检测当前状态
+                await _currentDataCollectorTask.RequestStop(); // 这里利用RequestStop的逻辑，它会检测当前状态
 
                 // 立即更新UI状态
                 DataCollectorStatusText = "正在采集";
@@ -675,7 +679,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
             else if (currentState == DataCollectorState.Collecting)
             {
                 // 从采集状态切换到等待触发状态
-                _currentDataCollectorTask.RequestStop(); // 这里利用RequestStop的逻辑，它会检测当前状态
+                await _currentDataCollectorTask.RequestStop(); // 这里利用RequestStop的逻辑，它会检测当前状态
 
                 // 立即更新UI状态
                 DataCollectorStatusText = "等待触发器";
@@ -692,18 +696,21 @@ public partial class TaskSettingsPageViewModel : ViewModel
 
     private void ResetDataCollectorUI()
     {
+        // 更新UI状态
         SwitchDataCollectorEnabled = false;
         DataCollectorStatusText = "已停止";
         DataCollectorActionButtonEnabled = false;
         DataCollectorActionButtonText = "开始采集";
 
-        // 清理任务引用和取消令牌源
+        // 保存对旧任务和取消令牌的引用，以便清理
         var oldTask = _currentDataCollectorTask;
         var oldCts = _dataCollectorCts;
+
+        // 立即清空引用，确保下次启动时创建新实例
         _currentDataCollectorTask = null;
         _dataCollectorCts = null;
 
-        // 如果有旧任务，尝试清理资源（但不重复调用RequestStop）
+        // 如果有旧任务，尝试清理资源
         if (oldTask != null)
         {
             try
@@ -732,12 +739,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
         }
     }
 
-    // 这个方法已经不需要了，因为我们在状态监控中直接更新按钮状态
-    // 保留方法签名以避免编译错误，但内部逻辑已移至状态监控
-    private void UpdateDataCollectorActionButton()
-    {
-        // 空实现，逻辑已移至状态监控
-    }
+
 
     private void StartDataCollectorStatusMonitoring()
     {

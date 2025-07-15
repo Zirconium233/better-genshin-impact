@@ -67,6 +67,32 @@ public class DataCollectorTask : ISoloTask
         _stateExtractor = new StateExtractor();
     }
 
+    /// <summary>
+    /// 更新任务参数，确保使用最新配置
+    /// </summary>
+    /// <param name="generateNewSessionId">是否生成新的会话ID，默认为false</param>
+    public void UpdateTaskParam(bool generateNewSessionId = false)
+    {
+        _taskParam.SetDefault(generateNewSessionId);
+        if (generateNewSessionId)
+        {
+            _logger.LogInformation("任务参数已更新为最新配置，并生成了新的会话ID: {SessionId}", _taskParam.SessionId);
+        }
+        else
+        {
+            _logger.LogInformation("任务参数已更新为最新配置，保留原会话ID: {SessionId}", _taskParam.SessionId);
+        }
+    }
+
+    /// <summary>
+    /// 生成新的会话ID
+    /// </summary>
+    public void GenerateNewSessionId()
+    {
+        _taskParam.GenerateNewSessionId();
+        _logger.LogInformation("已生成新的会话ID: {SessionId}", _taskParam.SessionId);
+    }
+
     public async Task Start(CancellationToken ct)
     {
         _ct = ct;
@@ -75,7 +101,7 @@ public class DataCollectorTask : ISoloTask
 
         try
         {
-            await InitializeSession();
+            // 不在这里初始化session，等到真正开始采集时再初始化
 
             // 根据配置决定启动模式
             if (_config.AutoTriggerEnabled)
@@ -123,56 +149,87 @@ public class DataCollectorTask : ISoloTask
     /// <summary>
     /// 请求停止数据采集 - 只停止当前采集，触发清理和重启循环
     /// </summary>
-    public void RequestStop()
+    public async Task RequestStop()
     {
         _logger.LogInformation("请求停止数据采集，将触发清理和重启循环");
 
+        DataCollectorState currentState;
+        bool shouldStartCollection = false;
+
+        // 在lock中获取状态并执行同步操作
         lock (_stateLock)
         {
-            if (_currentState == DataCollectorState.Collecting)
+            currentState = _currentState;
+
+            if (currentState == DataCollectorState.Collecting)
             {
                 // 停止当前采集
                 StopDataCollection();
 
                 // 设置状态为停止，保存数据，然后重启
                 SetState(DataCollectorState.Stopped);
-
-                // 触发清理缓冲区和重启监视器的逻辑
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        // 短暂延迟，让UI显示"等待后处理"状态
-                        await Task.Delay(500);
-
-                        // 清理和重启
-                        await CleanupAndRestart();
-
-                        // 自动转换到等待触发状态
-                        SetState(DataCollectorState.WaitingTrigger);
-
-                        // 启动触发器检查
-                        if (_triggerCheckTimer == null && _config.AutoTriggerEnabled)
-                        {
-                            _triggerCheckTimer = new Timer(CheckTriggers, null, 0, 500);
-                            _logger.LogInformation("触发器检查已启动");
-                        }
-
-                        _logger.LogInformation("已自动转换到等待触发状态");
-                    }
-                    catch (Exception e)
-                    {
-                        _logger.LogError(e, "清理和重启过程中发生异常");
-                        // 如果清理重启失败，设置为等待触发状态
-                        SetState(DataCollectorState.WaitingTrigger);
-                    }
-                });
             }
-            else if (_currentState == DataCollectorState.WaitingTrigger)
+            else if (currentState == DataCollectorState.WaitingTrigger)
             {
-                // 如果当前在等待触发，直接开始采集
-                SetState(DataCollectorState.Collecting);
-                StartDataCollection();
+                // 如果当前在等待触发，标记需要开始采集
+                shouldStartCollection = true;
+            }
+        }
+
+        // 在lock外执行异步操作
+        if (currentState == DataCollectorState.Collecting)
+        {
+            // 触发清理缓冲区和重启监视器的逻辑
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // 短暂延迟，让UI显示"等待后处理"状态
+                    await Task.Delay(500);
+
+                    // 清理和重启
+                    await CleanupAndRestart();
+
+                    // 自动转换到等待触发状态
+                    SetState(DataCollectorState.WaitingTrigger);
+
+                    // 启动触发器检查
+                    if (_triggerCheckTimer == null && _config.AutoTriggerEnabled)
+                    {
+                        _triggerCheckTimer = new Timer(CheckTriggers, null, 0, 500);
+                        _logger.LogInformation("触发器检查已启动");
+                    }
+
+                    _logger.LogInformation("已自动转换到等待触发状态");
+                }
+                catch (Exception e)
+                {
+                    _logger.LogError(e, "清理和重启过程中发生异常");
+                    // 如果清理重启失败，设置为等待触发状态
+                    SetState(DataCollectorState.WaitingTrigger);
+                }
+            });
+        }
+        else if (shouldStartCollection)
+        {
+            // 如果当前在等待触发，生成新的会话ID并开始采集
+            GenerateNewSessionId();
+
+            // 重新初始化会话以使用新的SessionId
+            try
+            {
+                await InitializeSession();
+
+                lock (_stateLock)
+                {
+                    SetState(DataCollectorState.Collecting);
+                    StartDataCollection();
+                }
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "重新初始化会话失败");
+                return;
             }
         }
     }
@@ -229,13 +286,13 @@ public class DataCollectorTask : ISoloTask
                 _logger.LogInformation("已保存 {Count} 条数据记录", _dataBuffer.Count);
             }
 
+            // 更新任务参数，确保使用最新配置（但不生成新SessionId，因为会在开始采集时生成）
+            UpdateTaskParam(generateNewSessionId: false);
+
             // 清理缓冲区
             ClearBuffers();
 
-            // 重新初始化会话
-            await InitializeSession();
-
-            // 重启监视器
+            // 重启监视器（不重新初始化会话，因为会在开始采集时初始化新会话）
             RestartMonitors();
 
             // 不在这里设置状态，由调用者决定状态
@@ -386,7 +443,7 @@ public class DataCollectorTask : ISoloTask
     private async Task StartTriggerMode()
     {
         SetState(DataCollectorState.WaitingTrigger);
-        await InitializeSession();
+        // 不在这里初始化session，等到真正开始采集时再初始化
 
         // 启动触发器检查定时器 - 优化为500ms间隔以减少CPU占用
         _triggerCheckTimer = new Timer(CheckTriggers, null, 0, 500); // 每500ms检查一次触发器
@@ -412,7 +469,7 @@ public class DataCollectorTask : ISoloTask
     private async Task StartManualMode()
     {
         SetState(DataCollectorState.WaitingTrigger);
-        await InitializeSession();
+        // 不在这里初始化session，等到真正开始采集时再初始化
         _logger.LogInformation("手动模式已启动，等待手动开始采集");
 
         // 等待取消信号
@@ -478,8 +535,31 @@ public class DataCollectorTask : ISoloTask
                 {
                     if (CheckStartTrigger())
                     {
-                        SetState(DataCollectorState.Collecting);
-                        StartDataCollection();
+                        // 在锁外启动异步任务
+                        GenerateNewSessionId();
+
+                        // 释放锁后再异步初始化会话
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await InitializeSession();
+
+                                // 重新获取锁来设置状态和启动采集
+                                lock (_stateLock)
+                                {
+                                    if (!_ct.IsCancellationRequested && !_stopRequested)
+                                    {
+                                        SetState(DataCollectorState.Collecting);
+                                        StartDataCollection();
+                                    }
+                                }
+                            }
+                            catch (Exception e)
+                            {
+                                _logger.LogError(e, "触发器启动采集时发生异常");
+                            }
+                        });
                     }
                 }
                 else if (_currentState == DataCollectorState.Collecting)

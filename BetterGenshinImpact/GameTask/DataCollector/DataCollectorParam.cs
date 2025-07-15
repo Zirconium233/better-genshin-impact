@@ -70,7 +70,8 @@ public class DataCollectorParam : BaseTaskParam
     /// <summary>
     /// 从配置中设置默认值
     /// </summary>
-    public void SetDefault()
+    /// <param name="generateNewSessionId">是否生成新的会话ID，默认为true</param>
+    public void SetDefault(bool generateNewSessionId = true)
     {
         var config = TaskContext.Instance().Config.DataCollectorConfig;
         DatasetPath = config.DatasetPath;
@@ -82,8 +83,20 @@ public class DataCollectorParam : BaseTaskParam
         ActionDetectionSensitivity = config.ActionDetectionSensitivity;
         CollectNoActionFrames = config.CollectNoActionFrames;
         NoActionFrameInterval = config.NoActionFrameInterval;
-        
-        // 生成唯一的会话ID
+
+        // 根据参数决定是否生成新的会话ID
+        if (generateNewSessionId)
+        {
+            SessionId = GenerateSessionId(config.SessionIdPrefix);
+        }
+    }
+
+    /// <summary>
+    /// 生成新的会话ID
+    /// </summary>
+    public void GenerateNewSessionId()
+    {
+        var config = TaskContext.Instance().Config.DataCollectorConfig;
         SessionId = GenerateSessionId(config.SessionIdPrefix);
     }
 
