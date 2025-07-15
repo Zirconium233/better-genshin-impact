@@ -134,18 +134,45 @@ public class DataCollectorTask : ISoloTask
                 // 停止当前采集
                 StopDataCollection();
 
+                // 设置状态为停止，保存数据，然后重启
+                SetState(DataCollectorState.Stopped);
+
                 // 触发清理缓冲区和重启监视器的逻辑
                 _ = Task.Run(async () =>
                 {
                     try
                     {
+                        // 短暂延迟，让UI显示"等待后处理"状态
+                        await Task.Delay(500);
+
+                        // 清理和重启
                         await CleanupAndRestart();
+
+                        // 自动转换到等待触发状态
+                        SetState(DataCollectorState.WaitingTrigger);
+
+                        // 启动触发器检查
+                        if (_triggerCheckTimer == null && _config.AutoTriggerEnabled)
+                        {
+                            _triggerCheckTimer = new Timer(CheckTriggers, null, 0, 500);
+                            _logger.LogInformation("触发器检查已启动");
+                        }
+
+                        _logger.LogInformation("已自动转换到等待触发状态");
                     }
                     catch (Exception e)
                     {
                         _logger.LogError(e, "清理和重启过程中发生异常");
+                        // 如果清理重启失败，设置为等待触发状态
+                        SetState(DataCollectorState.WaitingTrigger);
                     }
                 });
+            }
+            else if (_currentState == DataCollectorState.WaitingTrigger)
+            {
+                // 如果当前在等待触发，直接开始采集
+                SetState(DataCollectorState.Collecting);
+                StartDataCollection();
             }
         }
     }
@@ -156,9 +183,34 @@ public class DataCollectorTask : ISoloTask
     public void RequestFullStop()
     {
         _logger.LogInformation("请求完全停止数据采集任务");
-        _stopRequested = true;
-        _internalCts?.Cancel();
-        SetState(DataCollectorState.Stopped);
+
+        lock (_stateLock)
+        {
+            // 如果当前正在采集，先停止采集
+            if (_currentState == DataCollectorState.Collecting)
+            {
+                _logger.LogInformation("检测到正在采集，先停止当前采集");
+                StopDataCollection();
+            }
+
+            _stopRequested = true;
+            SetState(DataCollectorState.Stopped);
+            _internalCts?.Cancel();
+        }
+    }
+
+    // 移除RestartToWaitingTrigger方法，因为现在状态自动转换
+
+    /// <summary>
+    /// 启动触发器检查
+    /// </summary>
+    private void StartTriggerChecking()
+    {
+        if (_triggerCheckTimer == null && _config.AutoTriggerEnabled)
+        {
+            _triggerCheckTimer = new Timer(CheckTriggers, null, 0, 500);
+            _logger.LogInformation("触发器检查已启动");
+        }
     }
 
     /// <summary>
@@ -168,22 +220,33 @@ public class DataCollectorTask : ISoloTask
     {
         _logger.LogInformation("开始清理缓冲区和重启监视器");
 
-        // 保存当前数据
-        await SaveCurrentSession();
+        try
+        {
+            // 保存当前数据到文件
+            if (_dataBuffer.Count > 0)
+            {
+                await SaveDataToFile();
+                _logger.LogInformation("已保存 {Count} 条数据记录", _dataBuffer.Count);
+            }
 
-        // 清理缓冲区
-        ClearBuffers();
+            // 清理缓冲区
+            ClearBuffers();
 
-        // 重新初始化会话
-        await InitializeSession();
+            // 重新初始化会话
+            await InitializeSession();
 
-        // 重启监视器
-        RestartMonitors();
+            // 重启监视器
+            RestartMonitors();
 
-        // 恢复到等待触发状态
-        SetState(DataCollectorState.WaitingTrigger);
+            // 不在这里设置状态，由调用者决定状态
 
-        _logger.LogInformation("清理和重启完成，恢复到等待触发状态");
+            _logger.LogInformation("清理和重启完成，恢复到等待触发状态");
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "清理和重启过程中发生异常");
+            throw;
+        }
     }
 
     /// <summary>
@@ -212,7 +275,16 @@ public class DataCollectorTask : ISoloTask
         {
             _logger.LogInformation("清理缓冲区");
             _frameIndex = 0;
-            // 这里可以添加其他缓冲区清理逻辑
+
+            // 清理数据缓冲区
+            lock (_bufferLock)
+            {
+                _dataBuffer.Clear();
+                _logger.LogInformation("数据缓冲区已清理，缓冲区大小: {Count}", _dataBuffer.Count);
+            }
+
+            // 清理输入事件
+            _inputMonitor?.ClearEvents();
         }
         catch (Exception e)
         {

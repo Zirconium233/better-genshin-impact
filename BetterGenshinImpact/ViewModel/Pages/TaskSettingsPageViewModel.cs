@@ -586,7 +586,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
         {
             if (_currentDataCollectorTask == null)
             {
-                // 启动数据采集器
+                // 启动数据采集独立任务
                 SwitchDataCollectorEnabled = true;
                 DataCollectorStatusText = "等待触发器";
                 DataCollectorActionButtonEnabled = true;
@@ -609,14 +609,15 @@ public partial class TaskSettingsPageViewModel : ViewModel
                     {
                         UIDispatcherHelper.Invoke(() =>
                         {
-                            Toast.Information("数据采集已停止");
+                            Toast.Information("数据采集任务已停止");
+                            ResetDataCollectorUI();
                         });
                     }
                     catch (OutOfMemoryException e)
                     {
                         UIDispatcherHelper.Invoke(() =>
                         {
-                            Toast.Error($"内存不足，数据采集已停止: {e.Message}");
+                            Toast.Error($"内存不足，数据采集任务已停止: {e.Message}");
                             ResetDataCollectorUI(); // OOM异常时reset UI
                         });
                     }
@@ -624,15 +625,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
                     {
                         UIDispatcherHelper.Invoke(() =>
                         {
-                            Toast.Error($"数据采集失败: {e.Message}");
-                            // 非OOM异常不reset UI，让任务继续运行
-                        });
-                    }
-                    finally
-                    {
-                        // 无论任务如何结束，都重置UI状态
-                        UIDispatcherHelper.Invoke(() =>
-                        {
+                            Toast.Error($"数据采集任务失败: {e.Message}");
                             ResetDataCollectorUI();
                         });
                     }
@@ -640,35 +633,18 @@ public partial class TaskSettingsPageViewModel : ViewModel
 
                 // 启动状态监控
                 StartDataCollectorStatusMonitoring();
+                Toast.Information("数据采集任务已启动");
             }
             else
             {
-                // 停止数据采集器 - 只停止采集，不停止整个任务
-                if (_currentDataCollectorTask != null)
-                {
-                    try
-                    {
-                        Debug.WriteLine("用户请求停止数据采集器");
-                        _currentDataCollectorTask.RequestStop();
+                // 停止数据采集独立任务
+                Debug.WriteLine("用户请求停止数据采集任务");
+                _currentDataCollectorTask.RequestFullStop();
+                _dataCollectorCts?.Cancel();
 
-                        // 更新UI状态为等待触发，不要reset整个UI
-                        SwitchDataCollectorEnabled = false;
-                        DataCollectorStatusText = "等待触发器";
-                        DataCollectorActionButtonEnabled = true;
-                        UpdateDataCollectorActionButton();
-
-                        Toast.Information("数据采集已停止");
-                    }
-                    catch (Exception ex)
-                    {
-                        Toast.Error($"停止数据采集失败: {ex.Message}");
-                        ResetDataCollectorUI();
-                    }
-                }
-                else
-                {
-                    ResetDataCollectorUI();
-                }
+                // 立即重置UI到初始状态
+                ResetDataCollectorUI();
+                Toast.Information("数据采集任务已停止");
             }
         }
         catch (Exception e)
@@ -688,22 +664,29 @@ public partial class TaskSettingsPageViewModel : ViewModel
             var currentState = _currentDataCollectorTask.GetCurrentState();
             if (currentState == DataCollectorState.WaitingTrigger)
             {
-                _currentDataCollectorTask.StartCollectionManually();
+                // 从等待触发状态切换到采集状态
+                _currentDataCollectorTask.RequestStop(); // 这里利用RequestStop的逻辑，它会检测当前状态
+
                 // 立即更新UI状态
-                UpdateDataCollectorActionButton();
+                DataCollectorStatusText = "正在采集";
+                DataCollectorActionButtonText = "停止采集";
+                Toast.Information("开始数据采集");
             }
             else if (currentState == DataCollectorState.Collecting)
             {
-                _currentDataCollectorTask.StopCollectionManually();
+                // 从采集状态切换到等待触发状态
+                _currentDataCollectorTask.RequestStop(); // 这里利用RequestStop的逻辑，它会检测当前状态
+
                 // 立即更新UI状态
-                UpdateDataCollectorActionButton();
+                DataCollectorStatusText = "等待触发器";
+                DataCollectorActionButtonText = "开始采集";
+                Toast.Information("停止数据采集");
             }
+            // 移除Stopped状态的处理，因为Stopped状态应该自动转换，不需要手动重启
         }
         catch (Exception ex)
         {
             Toast.Error($"数据采集操作失败: {ex.Message}");
-            // 发生异常时重置UI
-            ResetDataCollectorUI();
         }
     }
 
@@ -749,32 +732,11 @@ public partial class TaskSettingsPageViewModel : ViewModel
         }
     }
 
+    // 这个方法已经不需要了，因为我们在状态监控中直接更新按钮状态
+    // 保留方法签名以避免编译错误，但内部逻辑已移至状态监控
     private void UpdateDataCollectorActionButton()
     {
-        if (_currentDataCollectorTask == null)
-        {
-            DataCollectorActionButtonEnabled = false;
-            return;
-        }
-
-        var currentState = _currentDataCollectorTask.GetCurrentState();
-        switch (currentState)
-        {
-            case DataCollectorState.WaitingTrigger:
-                DataCollectorStatusText = "等待触发器";
-                DataCollectorActionButtonText = "开始采集";
-                DataCollectorActionButtonEnabled = true;
-                break;
-            case DataCollectorState.Collecting:
-                DataCollectorStatusText = "采集中";
-                DataCollectorActionButtonText = "停止采集";
-                DataCollectorActionButtonEnabled = true;
-                break;
-            case DataCollectorState.Stopped:
-                DataCollectorStatusText = "已停止";
-                DataCollectorActionButtonEnabled = false;
-                break;
-        }
+        // 空实现，逻辑已移至状态监控
     }
 
     private void StartDataCollectorStatusMonitoring()
@@ -783,7 +745,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
         var timer = new System.Timers.Timer(1000);
         timer.Elapsed += (sender, e) =>
         {
-            if (_currentDataCollectorTask == null)
+            if (_currentDataCollectorTask == null || _dataCollectorCts?.IsCancellationRequested == true)
             {
                 timer.Stop();
                 return;
@@ -793,26 +755,27 @@ public partial class TaskSettingsPageViewModel : ViewModel
             {
                 // 检查任务是否已经结束
                 var currentState = _currentDataCollectorTask.GetCurrentState();
-                if (currentState == DataCollectorState.Stopped)
-                {
-                    // 任务已结束，重置UI
-                    ResetDataCollectorUI();
-                    timer.Stop();
-                    return;
-                }
 
                 // 根据状态更新UI
                 switch (currentState)
                 {
+                    case DataCollectorState.Stopped:
+                        // 采集停止，显示等待后处理，禁用按钮
+                        DataCollectorStatusText = "等待后处理";
+                        DataCollectorActionButtonEnabled = false;
+                        DataCollectorActionButtonText = "等待后处理";
+                        break;
                     case DataCollectorState.WaitingTrigger:
                         DataCollectorStatusText = "等待触发器";
+                        DataCollectorActionButtonEnabled = true;
+                        DataCollectorActionButtonText = "开始采集";
                         break;
                     case DataCollectorState.Collecting:
                         DataCollectorStatusText = "正在采集";
+                        DataCollectorActionButtonEnabled = true;
+                        DataCollectorActionButtonText = "停止采集";
                         break;
                 }
-
-                UpdateDataCollectorActionButton();
             });
         };
         timer.Start();
