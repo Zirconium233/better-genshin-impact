@@ -34,10 +34,10 @@ public class DataRecord
     public string FramePath { get; set; } = string.Empty;
 
     /// <summary>
-    /// 玩家动作
+    /// 脚本格式的动作 - 基于action_report.md的设计
     /// </summary>
-    [JsonProperty("player_action")]
-    public PlayerAction? PlayerAction { get; set; }
+    [JsonProperty("action_script")]
+    public string ActionScript { get; set; } = string.Empty;
 
     /// <summary>
     /// 结构化状态
@@ -46,101 +46,10 @@ public class DataRecord
     public StructuredState StructuredState { get; set; } = new();
 }
 
-/// <summary>
-/// 玩家动作
-/// </summary>
-public class PlayerAction
-{
-    /// <summary>
-    /// 移动
-    /// </summary>
-    [JsonProperty("movement")]
-    public MovementEnum Movement { get; set; } = MovementEnum.NO_OP;
 
-    /// <summary>
-    /// 角色动作
-    /// </summary>
-    [JsonProperty("character_action")]
-    public CharacterActionEnum CharacterAction { get; set; } = CharacterActionEnum.NO_OP;
-
-    /// <summary>
-    /// 视角控制
-    /// </summary>
-    [JsonProperty("camera_control")]
-    public CameraControl CameraControl { get; set; } = new();
-
-    /// <summary>
-    /// 目标锁定
-    /// </summary>
-    [JsonProperty("target_lock")]
-    public bool TargetLock { get; set; } = false;
-}
 
 /// <summary>
-/// 视角控制
-/// </summary>
-public class CameraControl
-{
-    /// <summary>
-    /// 俯仰角变化量 (像素)
-    /// </summary>
-    [JsonProperty("pitch_delta")]
-    public float PitchDelta { get; set; } = 0.0f;
-
-    /// <summary>
-    /// 偏航角变化量 (像素)
-    /// </summary>
-    [JsonProperty("yaw_delta")]
-    public float YawDelta { get; set; } = 0.0f;
-
-    /// <summary>
-    /// 是否为零变化
-    /// </summary>
-    public bool IsZero() => Math.Abs(PitchDelta) < 0.1f && Math.Abs(YawDelta) < 0.1f;
-}
-
-/// <summary>
-/// 移动枚举
-/// </summary>
-public enum MovementEnum
-{
-    NO_OP,
-    FORWARD,
-    BACKWARD,
-    LEFT,
-    RIGHT,
-    FORWARD_LEFT,
-    FORWARD_RIGHT,
-    BACKWARD_LEFT,
-    BACKWARD_RIGHT,
-    FORWARD_SPRINT,
-    FORWARD_LEFT_SPRINT,
-    FORWARD_RIGHT_SPRINT
-}
-
-/// <summary>
-/// 角色动作枚举
-/// </summary>
-public enum CharacterActionEnum
-{
-    NO_OP,
-    NORMAL_ATTACK,
-    CHARGED_ATTACK,
-    ELEMENTAL_SKILL,
-    ELEMENTAL_SKILL_HOLD,
-    ELEMENTAL_BURST,
-    DODGE,
-    JUMP,
-    SWITCH_TO_1,
-    SWITCH_TO_2,
-    SWITCH_TO_3,
-    SWITCH_TO_4,
-    INTERACT,
-    QUICK_USE_GADGET
-}
-
-/// <summary>
-/// 结构化状态
+/// 结构化状态 - 简化版，只保留必要信息
 /// </summary>
 public class StructuredState
 {
@@ -151,7 +60,7 @@ public class StructuredState
     public GameContext GameContext { get; set; } = new();
 
     /// <summary>
-    /// 玩家队伍
+    /// 玩家队伍 - 用于大模型切人
     /// </summary>
     [JsonProperty("player_team")]
     public List<CharacterState> PlayerTeam { get; set; } = new();
@@ -161,18 +70,6 @@ public class StructuredState
     /// </summary>
     [JsonProperty("active_character_index")]
     public int ActiveCharacterIndex { get; set; } = 0;
-
-    /// <summary>
-    /// 敌人列表
-    /// </summary>
-    [JsonProperty("enemies")]
-    public List<EnemyState> Enemies { get; set; } = new();
-
-    /// <summary>
-    /// 战斗事件
-    /// </summary>
-    [JsonProperty("combat_events")]
-    public List<CombatEvent> CombatEvents { get; set; } = new();
 }
 
 /// <summary>
@@ -241,50 +138,4 @@ public class CharacterState
     public bool BurstAvailable { get; set; } = false;
 }
 
-/// <summary>
-/// 敌人状态
-/// </summary>
-public class EnemyState
-{
-    /// <summary>
-    /// 血量百分比
-    /// </summary>
-    [JsonProperty("hp_percent")]
-    public float HpPercent { get; set; } = 1.0f;
 
-    /// <summary>
-    /// 距离估计
-    /// </summary>
-    [JsonProperty("distance")]
-    public float Distance { get; set; } = 0.0f;
-
-    /// <summary>
-    /// 屏幕位置
-    /// </summary>
-    [JsonProperty("position_on_screen")]
-    public float[] PositionOnScreen { get; set; } = new float[2];
-}
-
-/// <summary>
-/// 战斗事件
-/// </summary>
-public class CombatEvent
-{
-    /// <summary>
-    /// 事件类型
-    /// </summary>
-    [JsonProperty("event_type")]
-    public string EventType { get; set; } = string.Empty;
-
-    /// <summary>
-    /// 事件时间戳
-    /// </summary>
-    [JsonProperty("timestamp")]
-    public long Timestamp { get; set; }
-
-    /// <summary>
-    /// 事件数据
-    /// </summary>
-    [JsonProperty("data")]
-    public Dictionary<string, object> Data { get; set; } = new();
-}

@@ -363,7 +363,7 @@ public class DataCollectorTask : ISoloTask
             var gameHandle = SystemControl.FindGenshinImpactHandle();
             if (gameHandle != IntPtr.Zero)
             {
-                _inputMonitor.StartMonitoring(gameHandle);
+                _inputMonitor.StartMonitoring();
             }
 
             // 重新初始化状态提取器
@@ -500,7 +500,10 @@ public class DataCollectorTask : ISoloTask
         Directory.CreateDirectory(_sessionPath);
         Directory.CreateDirectory(_framesPath);
 
-        _logger.LogInformation("会话初始化完成: {SessionId}, 路径: {SessionPath}", 
+        // 初始化原始输入文件
+        _inputMonitor.InitializeRawInputFile(_sessionPath);
+
+        _logger.LogInformation("会话初始化完成: {SessionId}, 路径: {SessionPath}",
             _taskParam.SessionId, _sessionPath);
 
         // 初始化输入监控
@@ -510,7 +513,7 @@ public class DataCollectorTask : ISoloTask
             throw new InvalidOperationException("未找到原神游戏窗口");
         }
 
-        _inputMonitor.StartMonitoring(gameHandle);
+        _inputMonitor.StartMonitoring();
         _logger.LogInformation("输入监控已启动");
 
         // 初始化状态提取器
@@ -753,12 +756,35 @@ private bool CheckDomainStart()
         {
             using var imageRegion = TaskControl.CaptureToRectArea();
 
-            // 检测玩家动作
-            var playerAction = _inputMonitor.DetectPlayerAction();
+            // 生成脚本格式的动作 - 基于action_report.md的设计
+            var actionScript = string.Empty;
+            var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            try
+            {
+                var frameInterval = 1000 / _taskParam.CollectionFps;
+                actionScript = _stateExtractor.GenerateActionScriptFromInput(_inputMonitor, frameInterval);
+
+                // 验证生成的脚本
+                if (!_stateExtractor.ValidateActionScript(actionScript))
+                {
+                    actionScript = $"wait({frameInterval / 1000.0:F1})";
+                }
+
+                // 记录非等待动作的脚本
+                if (!actionScript.StartsWith("wait") && _taskParam.DebugMode)
+                {
+                    _logger.LogInformation("检测到动作脚本: {ActionScript}", actionScript);
+                }
+            }
+            catch (Exception e)
+            {
+                _logger.LogDebug(e, "生成动作脚本失败");
+                actionScript = $"wait({1000 / _taskParam.CollectionFps / 1000.0:F1})";
+            }
 
             // 检查是否需要采集无动作帧
-            var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            if (playerAction == null && !_taskParam.CollectNoActionFrames)
+            if (actionScript.StartsWith("wait") && !_taskParam.CollectNoActionFrames)
             {
                 // 检查是否需要采集无动作帧
                 if (currentTime - _lastNoActionFrameTime < _taskParam.NoActionFrameInterval)
@@ -778,15 +804,7 @@ private bool CheckDomainStart()
                 var extractionOptions = StateExtractionOptions.Default;
                 if (_config.CollectPlayerTeam)
                 {
-                    extractionOptions.ExtractPlayerTeam = true;
-                }
-                if (_config.CollectEnemies)
-                {
-                    extractionOptions.ExtractEnemies = true;
-                }
-                if (_config.CollectCombatEvents)
-                {
-                    extractionOptions.ExtractCombatEvents = true;
+                    extractionOptions.ExtractTeamInfo = true;
                 }
 
                 structuredState = _stateExtractor.ExtractStructuredState(imageRegion, extractionOptions);
@@ -819,7 +837,7 @@ private bool CheckDomainStart()
                 FrameIndex = _frameIndex++,
                 TimeOffsetMs = currentTime - _sessionStartTime,
                 FramePath = framePath,
-                PlayerAction = playerAction,
+                ActionScript = actionScript, // 脚本格式的动作
                 StructuredState = structuredState ?? new StructuredState()
             };
 
@@ -921,32 +939,78 @@ private bool CheckDomainStart()
     }
 
     /// <summary>
-    /// 清理资源
+    /// 清理资源 - 增强版，确保所有资源正确释放
     /// </summary>
     private async Task Cleanup()
     {
         _logger.LogInformation("开始清理资源");
 
-        // 停止所有定时器
-        _collectionTimer?.Dispose();
-        _triggerCheckTimer?.Dispose();
-        _inputMonitor?.Dispose();
-
-        // 清理内部取消令牌源
-        _internalCts?.Dispose();
-        _internalCts = null;
-
-        // 设置状态为停止
-        SetState(DataCollectorState.Stopped);
-
-        // 保存数据到文件
-        if (_dataBuffer.Count > 0)
+        try
         {
-            await SaveDataToFile();
+            // 停止所有定时器
+            try
+            {
+                _collectionTimer?.Dispose();
+                _collectionTimer = null;
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning(e, "清理采集定时器时发生异常");
+            }
+
+            try
+            {
+                _triggerCheckTimer?.Dispose();
+                _triggerCheckTimer = null;
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning(e, "清理触发器定时器时发生异常");
+            }
+
+            // 清理输入监控器
+            try
+            {
+                _inputMonitor?.Dispose();
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning(e, "清理输入监控器时发生异常");
+            }
+
+            // 清理内部取消令牌源
+            try
+            {
+                _internalCts?.Dispose();
+                _internalCts = null;
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning(e, "清理取消令牌源时发生异常");
+            }
+
+            // 设置状态为停止
+            SetState(DataCollectorState.Stopped);
+
+            // 保存数据到文件
+            if (_dataBuffer.Count > 0)
+            {
+                await SaveDataToFile();
+            }
+            else
+            {
+                _logger.LogWarning("没有采集到任何数据");
+            }
+
+            // 清理数据缓冲区
+            lock (_bufferLock)
+            {
+                _dataBuffer.Clear();
+            }
         }
-        else
+        catch (Exception e)
         {
-            _logger.LogWarning("没有采集到任何数据");
+            _logger.LogError(e, "清理资源时发生异常");
         }
 
         _logger.LogInformation("资源清理完成");
@@ -1013,7 +1077,7 @@ private bool CheckDomainStart()
     /// <summary>
     /// 计算目录大小
     /// </summary>
-    private long CalculateDirectorySize(string directoryPath)
+    private static long CalculateDirectorySize(string directoryPath)
     {
         var directory = new DirectoryInfo(directoryPath);
         return directory.GetFiles("*", SearchOption.AllDirectories)

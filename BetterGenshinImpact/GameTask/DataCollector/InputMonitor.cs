@@ -4,80 +4,66 @@ using BetterGenshinImpact.Core.Simulator.Extensions;
 using BetterGenshinImpact.GameTask.DataCollector.Model;
 using Gma.System.MouseKeyHook;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
 namespace BetterGenshinImpact.GameTask.DataCollector;
 
 /// <summary>
-/// 输入监控器
+/// 输入监控器 - 重构版，专注于原始输入记录和脚本生成
 /// </summary>
 public class InputMonitor : IDisposable
 {
     private readonly ILogger<InputMonitor> _logger = App.GetLogger<InputMonitor>();
-    private readonly ConcurrentQueue<InputEvent> _inputEvents = new();
-    private readonly Dictionary<GIActions, bool> _actionStates = new();
-    private readonly Dictionary<Keys, GIActions> _keyToActionMap = new();
-    private readonly Queue<MouseMovement> _mouseMovements = new();
     private readonly object _lockObject = new();
     private bool _disposed = false;
     private bool _isMonitoring = false;
 
+    // 原始输入记录 - 用于生成完整的输入日志
+    private readonly ConcurrentQueue<RawInputRecord> _rawInputRecords = new();
+
+    // 按键状态跟踪 - 用于处理交错按键和异常情况
+    private readonly Dictionary<Keys, KeyState> _keyStates = new();
+    private readonly Dictionary<string, MouseButtonState> _mouseStates = new();
+
+    // 脚本生成缓存
+    private readonly Queue<ActionEvent> _actionEvents = new();
+
+    // 原始输入文件写入
+    private string _rawInputFilePath = string.Empty;
+    private StreamWriter? _rawInputWriter;
+
     public InputMonitor()
     {
-        InitializeActionStates();
-        InitializeKeyMapping();
+        _logger.LogInformation("输入监控器已初始化");
     }
 
     /// <summary>
-    /// 初始化动作状态
+    /// 初始化原始输入文件写入
     /// </summary>
-    private void InitializeActionStates()
+    public void InitializeRawInputFile(string sessionPath)
     {
-        // 初始化所有GIActions状态为false
-        foreach (GIActions action in Enum.GetValues<GIActions>())
+        try
         {
-            _actionStates[action] = false;
+            _rawInputFilePath = Path.Combine(sessionPath, "raw_inputs.jsonl");
+            _rawInputWriter = new StreamWriter(_rawInputFilePath, false);
+            _logger.LogInformation("原始输入文件已初始化: {FilePath}", _rawInputFilePath);
+        }
+        catch (Exception e)
+        {
+            _logger.LogError(e, "初始化原始输入文件失败");
         }
     }
 
     /// <summary>
-    /// 初始化按键到动作的映射
+    /// 开始监控
     /// </summary>
-    private void InitializeKeyMapping()
-    {
-        // 从配置中获取键位映射
-        var keyConfig = TaskContext.Instance().Config.KeyBindingsConfig;
-
-        // 创建KeyId到Keys的映射（简化处理，使用默认键位）
-        _keyToActionMap[Keys.W] = GIActions.MoveForward;
-        _keyToActionMap[Keys.S] = GIActions.MoveBackward;
-        _keyToActionMap[Keys.A] = GIActions.MoveLeft;
-        _keyToActionMap[Keys.D] = GIActions.MoveRight;
-        _keyToActionMap[Keys.LShiftKey] = GIActions.SprintKeyboard;
-        _keyToActionMap[Keys.RShiftKey] = GIActions.SprintKeyboard;
-        _keyToActionMap[Keys.LButton] = GIActions.NormalAttack;
-        _keyToActionMap[Keys.E] = GIActions.ElementalSkill;
-        _keyToActionMap[Keys.Q] = GIActions.ElementalBurst;
-        _keyToActionMap[Keys.Space] = GIActions.Jump;
-        _keyToActionMap[Keys.D1] = GIActions.SwitchMember1;
-        _keyToActionMap[Keys.D2] = GIActions.SwitchMember2;
-        _keyToActionMap[Keys.D3] = GIActions.SwitchMember3;
-        _keyToActionMap[Keys.D4] = GIActions.SwitchMember4;
-        _keyToActionMap[Keys.F] = GIActions.PickUpOrInteract;
-        _keyToActionMap[Keys.T] = GIActions.QuickUseGadget;
-        _keyToActionMap[Keys.MButton] = GIActions.SwitchAimingMode; // 中键锁定
-
-        _logger.LogInformation("按键映射已初始化，共{Count}个映射", _keyToActionMap.Count);
-    }
-
-    /// <summary>
-    /// 开始监控 - 利用现有的GlobalKeyMouseRecord系统，避免钩子冲突
-    /// </summary>
-    public void StartMonitoring(IntPtr gameHandle)
+    public void StartMonitoring()
     {
         _logger.LogInformation("开始输入监控");
         _isMonitoring = true;
@@ -100,242 +86,265 @@ public class InputMonitor : IDisposable
         // 从GlobalKeyMouseRecord系统注销
         GlobalKeyMouseRecord.Instance.InputMonitorKeyDown = null;
         GlobalKeyMouseRecord.Instance.InputMonitorKeyUp = null;
+
+        // 清理所有状态
+        lock (_lockObject)
+        {
+            _keyStates.Clear();
+            _mouseStates.Clear();
+            while (_actionEvents.TryDequeue(out _)) { }
+            while (_rawInputRecords.TryDequeue(out _)) { }
+        }
+
+        // 关闭原始输入文件
+        _rawInputWriter?.Close();
+        _rawInputWriter?.Dispose();
+        _rawInputWriter = null;
     }
 
     /// <summary>
-    /// 按键按下事件
+    /// 按键按下事件 - 重构版，处理交错按键和异常情况
     /// </summary>
     public void OnKeyDown(object? sender, KeyEventArgs e)
     {
         if (!_isMonitoring) return;
 
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
         lock (_lockObject)
         {
-            // 检查是否有对应的GIAction
-            if (_keyToActionMap.TryGetValue(e.KeyCode, out var action))
+            try
             {
-                _actionStates[action] = true;
-                _inputEvents.Enqueue(new InputEvent
+                // 记录原始输入
+                var rawRecord = new RawInputRecord
                 {
-                    Type = InputEventType.KeyDown,
-                    Key = e.KeyCode,
-                    Action = action,
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                });
+                    Type = "KeyDown",
+                    Key = e.KeyCode.ToString(),
+                    Timestamp = timestamp
+                };
+                _rawInputRecords.Enqueue(rawRecord);
+                WriteRawInputRecord(rawRecord);
 
-                // 添加INFO日志，表明检测到的按键和对应的Action
-                _logger.LogInformation("检测到按键: {Key} -> {Action}", e.KeyCode, action);
+                // 处理按键状态 - 鲁棒性处理
+                if (_keyStates.ContainsKey(e.KeyCode))
+                {
+                    var existingState = _keyStates[e.KeyCode];
+                    if (existingState.IsPressed)
+                    {
+                        // 异常情况：重复KeyDown，记录警告并更新时间
+                        _logger.LogWarning("检测到重复KeyDown事件: {Key}, 上次时间: {LastTime}, 当前时间: {CurrentTime}",
+                            e.KeyCode, existingState.PressTime, timestamp);
+                        existingState.PressTime = timestamp;
+                        existingState.RepeatCount++;
+                    }
+                    else
+                    {
+                        existingState.IsPressed = true;
+                        existingState.PressTime = timestamp;
+                        existingState.RepeatCount = 0;
+                    }
+                }
+                else
+                {
+                    _keyStates[e.KeyCode] = new KeyState
+                    {
+                        IsPressed = true,
+                        PressTime = timestamp,
+                        RepeatCount = 0
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "处理KeyDown事件时发生异常: {Key}", e.KeyCode);
             }
         }
     }
 
     /// <summary>
-    /// 按键释放事件
+    /// 按键释放事件 - 重构版，处理交错按键和异常情况
     /// </summary>
     public void OnKeyUp(object? sender, KeyEventArgs e)
     {
         if (!_isMonitoring) return;
 
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
         lock (_lockObject)
         {
-            // 检查是否有对应的GIAction
-            if (_keyToActionMap.TryGetValue(e.KeyCode, out var action))
+            try
             {
-                _actionStates[action] = false;
-                _inputEvents.Enqueue(new InputEvent
+                // 记录原始输入
+                var rawRecord = new RawInputRecord
                 {
-                    Type = InputEventType.KeyUp,
-                    Key = e.KeyCode,
-                    Action = action,
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                });
+                    Type = "KeyUp",
+                    Key = e.KeyCode.ToString(),
+                    Timestamp = timestamp
+                };
+                _rawInputRecords.Enqueue(rawRecord);
+                WriteRawInputRecord(rawRecord);
+
+                // 处理按键状态和生成动作事件
+                if (_keyStates.TryGetValue(e.KeyCode, out var keyState))
+                {
+                    if (keyState.IsPressed)
+                    {
+                        var duration = timestamp - keyState.PressTime;
+                        keyState.IsPressed = false;
+                        keyState.ReleasTime = timestamp;
+
+                        // 生成动作事件用于脚本生成
+                        var actionEvent = new ActionEvent
+                        {
+                            Key = e.KeyCode,
+                            Duration = duration,
+                            StartTime = keyState.PressTime,
+                            EndTime = timestamp,
+                            RepeatCount = keyState.RepeatCount
+                        };
+
+                        _actionEvents.Enqueue(actionEvent);
+
+                        // 保持队列大小
+                        while (_actionEvents.Count > 1000)
+                        {
+                            _actionEvents.Dequeue();
+                        }
+                    }
+                    else
+                    {
+                        // 异常情况：KeyUp但没有对应的KeyDown
+                        _logger.LogWarning("检测到孤立的KeyUp事件: {Key}, 时间: {Time}", e.KeyCode, timestamp);
+                    }
+                }
+                else
+                {
+                    // 异常情况：KeyUp但没有状态记录
+                    _logger.LogWarning("检测到未知的KeyUp事件: {Key}, 时间: {Time}", e.KeyCode, timestamp);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "处理KeyUp事件时发生异常: {Key}", e.KeyCode);
             }
         }
     }
 
     /// <summary>
-    /// 鼠标移动事件
+    /// 写入原始输入记录到文件 - 增强容错机制
     /// </summary>
-    private void OnMouseMove(object? sender, MouseEventExtArgs e)
+    private void WriteRawInputRecord(RawInputRecord record)
     {
-        lock (_lockObject)
+        try
         {
-            // 计算相对移动量（这里简化处理）
-            _mouseMovements.Enqueue(new MouseMovement
+            if (_rawInputWriter != null && !_disposed)
             {
-                DeltaX = e.X,
-                DeltaY = e.Y,
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-            });
-
-            // 保持队列大小
-            while (_mouseMovements.Count > 100)
-            {
-                _mouseMovements.Dequeue();
+                var json = JsonConvert.SerializeObject(record);
+                _rawInputWriter.WriteLine(json);
+                _rawInputWriter.Flush();
             }
         }
-    }
-
-    /// <summary>
-    /// 检测玩家动作
-    /// </summary>
-    public PlayerAction? DetectPlayerAction()
-    {
-        lock (_lockObject)
+        catch (ObjectDisposedException)
         {
-            var movement = DetectMovement();
-            var characterAction = DetectCharacterAction();
-            var cameraControl = DetectCameraControl();
-            var targetLock = DetectTargetLock();
-
-            // 如果没有任何动作，返回null
-            if (movement == MovementEnum.NO_OP && 
-                characterAction == CharacterActionEnum.NO_OP && 
-                cameraControl.IsZero() && 
-                !targetLock)
-            {
-                return null;
-            }
-
-            var playerAction = new PlayerAction
-            {
-                Movement = movement,
-                CharacterAction = characterAction,
-                CameraControl = cameraControl,
-                TargetLock = targetLock
-            };
-
-            // 记录检测到的完整Action
-            _logger.LogInformation("检测到玩家动作: Movement={Movement}, CharacterAction={CharacterAction}, TargetLock={TargetLock}",
-                movement, characterAction, targetLock);
-
-            return playerAction;
+            // 文件已被释放，停止写入但不记录错误
+            _rawInputWriter = null;
         }
-    }
-
-    /// <summary>
-    /// 检测移动
-    /// </summary>
-    private MovementEnum DetectMovement()
-    {
-        // 使用GIActions检测移动
-        bool forward = IsActionPressed(GIActions.MoveForward);
-        bool backward = IsActionPressed(GIActions.MoveBackward);
-        bool left = IsActionPressed(GIActions.MoveLeft);
-        bool right = IsActionPressed(GIActions.MoveRight);
-        bool sprint = IsActionPressed(GIActions.SprintKeyboard);
-
-        // 8方向移动检测
-        if (forward && left)
-            return sprint ? MovementEnum.FORWARD_LEFT_SPRINT : MovementEnum.FORWARD_LEFT;
-        if (forward && right)
-            return sprint ? MovementEnum.FORWARD_RIGHT_SPRINT : MovementEnum.FORWARD_RIGHT;
-        if (backward && left)
-            return MovementEnum.BACKWARD_LEFT;
-        if (backward && right)
-            return MovementEnum.BACKWARD_RIGHT;
-        if (forward)
-            return sprint ? MovementEnum.FORWARD_SPRINT : MovementEnum.FORWARD;
-        if (backward)
-            return MovementEnum.BACKWARD;
-        if (left)
-            return MovementEnum.LEFT;
-        if (right)
-            return MovementEnum.RIGHT;
-
-        return MovementEnum.NO_OP;
-    }
-
-    /// <summary>
-    /// 检测角色动作
-    /// </summary>
-    private CharacterActionEnum DetectCharacterAction()
-    {
-        // 检查最近的动作事件
-        var recentEvents = _inputEvents.Where(e =>
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - e.Timestamp < 100).ToList();
-
-        foreach (var evt in recentEvents.Where(e => e.Type == InputEventType.KeyDown))
+        catch (IOException e)
         {
-            switch (evt.Action)
+            _logger.LogWarning(e, "写入原始输入记录失败，可能是磁盘空间不足或文件被锁定");
+            // 尝试重新初始化文件写入器
+            try
             {
-                case GIActions.NormalAttack:
-                    return CharacterActionEnum.NORMAL_ATTACK;
-                case GIActions.ElementalSkill:
-                    // 检查是否长按E键
-                    return IsActionPressed(GIActions.ElementalSkill) ?
-                        CharacterActionEnum.ELEMENTAL_SKILL_HOLD : CharacterActionEnum.ELEMENTAL_SKILL;
-                case GIActions.ElementalBurst:
-                    return CharacterActionEnum.ELEMENTAL_BURST;
-                case GIActions.Jump:
-                    return CharacterActionEnum.JUMP;
-                case GIActions.SwitchMember1:
-                    return CharacterActionEnum.SWITCH_TO_1;
-                case GIActions.SwitchMember2:
-                    return CharacterActionEnum.SWITCH_TO_2;
-                case GIActions.SwitchMember3:
-                    return CharacterActionEnum.SWITCH_TO_3;
-                case GIActions.SwitchMember4:
-                    return CharacterActionEnum.SWITCH_TO_4;
-                case GIActions.PickUpOrInteract:
-                    return CharacterActionEnum.INTERACT;
-                case GIActions.QuickUseGadget:
-                    return CharacterActionEnum.QUICK_USE_GADGET;
+                _rawInputWriter?.Close();
+                _rawInputWriter?.Dispose();
+                _rawInputWriter = null;
+            }
+            catch
+            {
+                // 忽略清理异常
             }
         }
-
-        return CharacterActionEnum.NO_OP;
-    }
-
-    /// <summary>
-    /// 检测视角控制
-    /// </summary>
-    private CameraControl DetectCameraControl()
-    {
-        var cameraControl = new CameraControl();
-        
-        if (_mouseMovements.Count > 0)
+        catch (Exception e)
         {
-            var recentMovements = _mouseMovements.Where(m => 
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - m.Timestamp < 100).ToList();
-
-            if (recentMovements.Any())
-            {
-                cameraControl.YawDelta = recentMovements.Sum(m => m.DeltaX);
-                cameraControl.PitchDelta = recentMovements.Sum(m => m.DeltaY);
-            }
+            _logger.LogError(e, "写入原始输入记录时发生未知异常");
         }
-
-        return cameraControl;
     }
 
     /// <summary>
-    /// 检测目标锁定
-    /// </summary>
-    private bool DetectTargetLock()
-    {
-        // 使用中键锁定目标（简化处理）
-        return IsActionPressed(GIActions.SwitchAimingMode);
-    }
-
-    /// <summary>
-    /// 检查动作是否激活
-    /// </summary>
-    private bool IsActionPressed(GIActions action)
-    {
-        return _actionStates.TryGetValue(action, out bool pressed) && pressed;
-    }
-
-    /// <summary>
-    /// 清理输入事件队列
+    /// 清理事件队列
     /// </summary>
     public void ClearEvents()
     {
         lock (_lockObject)
         {
-            while (_inputEvents.TryDequeue(out _)) { }
-            _mouseMovements.Clear();
+            while (_actionEvents.TryDequeue(out _)) { }
+            while (_rawInputRecords.TryDequeue(out _)) { }
+            _keyStates.Clear();
+            _mouseStates.Clear();
         }
+    }
+
+    /// <summary>
+    /// 生成脚本格式的动作字符串 - 重构版，基于ActionEvent
+    /// </summary>
+    public string GenerateActionScript(long timeWindowMs = 200)
+    {
+        lock (_lockObject)
+        {
+            var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var actions = new List<string>();
+
+            // 获取时间窗口内的动作事件
+            var recentEvents = _actionEvents
+                .Where(e => currentTime - e.EndTime <= timeWindowMs)
+                .OrderBy(e => e.StartTime)
+                .ToList();
+
+            foreach (var evt in recentEvents)
+            {
+                var actionScript = ConvertActionEventToScript(evt);
+                if (!string.IsNullOrEmpty(actionScript))
+                {
+                    actions.Add(actionScript);
+                }
+            }
+
+            // 如果没有动作，返回等待指令
+            if (actions.Count == 0)
+            {
+                return $"wait({timeWindowMs / 1000.0:F1})";
+            }
+
+            return string.Join(",", actions);
+        }
+    }
+
+    /// <summary>
+    /// 将动作事件转换为脚本格式 - 复用BGI现有的脚本语法
+    /// </summary>
+    private static string ConvertActionEventToScript(ActionEvent evt)
+    {
+        var durationSeconds = evt.Duration / 1000.0;
+
+        return evt.Key switch
+        {
+            Keys.W => durationSeconds > 0.05 ? $"w({durationSeconds:F1})" : "w(0.1)",
+            Keys.A => durationSeconds > 0.05 ? $"a({durationSeconds:F1})" : "a(0.1)",
+            Keys.S => durationSeconds > 0.05 ? $"s({durationSeconds:F1})" : "s(0.1)",
+            Keys.D => durationSeconds > 0.05 ? $"d({durationSeconds:F1})" : "d(0.1)",
+            Keys.E => durationSeconds > 0.5 ? "e(hold)" : "e",
+            Keys.Q => "q",
+            Keys.LButton => durationSeconds > 0.3 ? $"charge({durationSeconds:F1})" : $"attack({durationSeconds:F1})",
+            Keys.Space => "jump",
+            Keys.LShiftKey or Keys.RShiftKey => durationSeconds > 0.05 ? $"dash({durationSeconds:F1})" : "dash(0.1)",
+            Keys.D1 => "1",
+            Keys.D2 => "2",
+            Keys.D3 => "3",
+            Keys.D4 => "4",
+            Keys.F => "f",
+            Keys.T => "t",
+            _ => string.Empty
+        };
     }
 
     public void Dispose()
@@ -350,31 +359,52 @@ public class InputMonitor : IDisposable
 }
 
 /// <summary>
-/// 输入事件
+/// 原始输入记录 - 用于完整的输入日志
 /// </summary>
-internal class InputEvent
+internal class RawInputRecord
 {
-    public InputEventType Type { get; set; }
+    [JsonProperty("type")]
+    public string Type { get; set; } = string.Empty; // "KeyDown", "KeyUp", "MouseDown", "MouseUp"
+
+    [JsonProperty("key")]
+    public string Key { get; set; } = string.Empty; // 按键名称
+
+    [JsonProperty("button")]
+    public string Button { get; set; } = string.Empty; // 鼠标按钮名称
+
+    [JsonProperty("timestamp")]
+    public long Timestamp { get; set; } // 时间戳(毫秒)
+}
+
+/// <summary>
+/// 按键状态 - 用于跟踪按键的完整生命周期
+/// </summary>
+internal class KeyState
+{
+    public bool IsPressed { get; set; }
+    public long PressTime { get; set; }
+    public long ReleasTime { get; set; }
+    public int RepeatCount { get; set; } // 重复KeyDown的次数
+}
+
+/// <summary>
+/// 鼠标按钮状态
+/// </summary>
+internal class MouseButtonState
+{
+    public bool IsPressed { get; set; }
+    public long PressTime { get; set; }
+    public long ReleasTime { get; set; }
+}
+
+/// <summary>
+/// 动作事件 - 用于脚本生成
+/// </summary>
+internal class ActionEvent
+{
     public Keys Key { get; set; }
-    public GIActions Action { get; set; }
-    public long Timestamp { get; set; }
-}
-
-/// <summary>
-/// 鼠标移动
-/// </summary>
-internal class MouseMovement
-{
-    public float DeltaX { get; set; }
-    public float DeltaY { get; set; }
-    public long Timestamp { get; set; }
-}
-
-/// <summary>
-/// 输入事件类型
-/// </summary>
-internal enum InputEventType
-{
-    KeyDown,
-    KeyUp
+    public long Duration { get; set; } // 持续时间(毫秒)
+    public long StartTime { get; set; }
+    public long EndTime { get; set; }
+    public int RepeatCount { get; set; } // 异常重复次数
 }

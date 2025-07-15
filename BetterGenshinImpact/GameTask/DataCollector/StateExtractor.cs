@@ -1,6 +1,7 @@
 using BetterGenshinImpact.Core.Recognition.OpenCv;
 using BetterGenshinImpact.Core.Recognition.ONNX;
 using BetterGenshinImpact.GameTask.AutoFight.Model;
+using BetterGenshinImpact.GameTask.AutoFight.Script;
 using BetterGenshinImpact.GameTask.Common.BgiVision;
 using BetterGenshinImpact.GameTask.DataCollector.Model;
 using BetterGenshinImpact.GameTask.Model.Area;
@@ -16,67 +17,44 @@ using Compunet.YoloSharp;
 namespace BetterGenshinImpact.GameTask.DataCollector;
 
 /// <summary>
-/// 状态提取选项
+/// 简化的状态提取选项
 /// </summary>
 public class StateExtractionOptions
 {
     /// <summary>
-    /// 是否提取玩家队伍状态
+    /// 是否提取队伍角色信息（用于大模型切人）
     /// </summary>
-    public bool ExtractPlayerTeam { get; set; } = false;
+    public bool ExtractTeamInfo { get; set; } = true;
 
     /// <summary>
-    /// 是否提取敌人状态
-    /// </summary>
-    public bool ExtractEnemies { get; set; } = false;
-
-    /// <summary>
-    /// 是否提取战斗事件
-    /// </summary>
-    public bool ExtractCombatEvents { get; set; } = false;
-
-    /// <summary>
-    /// 默认选项 - 只提取基本的游戏上下文
+    /// 默认选项 - 只提取基本信息
     /// </summary>
     public static StateExtractionOptions Default => new();
 
     /// <summary>
-    /// 完整选项 - 提取所有信息
+    /// 完整选项 - 提取队伍信息
     /// </summary>
     public static StateExtractionOptions Full => new()
     {
-        ExtractPlayerTeam = true,
-        ExtractEnemies = true,
-        ExtractCombatEvents = true
-    };
-
-    /// <summary>
-    /// 战斗选项 - 提取战斗相关信息
-    /// </summary>
-    public static StateExtractionOptions Combat => new()
-    {
-        ExtractPlayerTeam = true,
-        ExtractEnemies = true,
-        ExtractCombatEvents = false // 战斗事件检测较慢，默认关闭
+        ExtractTeamInfo = true
     };
 }
 
 /// <summary>
-/// 状态提取器
+/// 状态提取器 - 重构版，专注于队伍信息和脚本生成
 /// </summary>
 public class StateExtractor
 {
     private readonly ILogger<StateExtractor> _logger = App.GetLogger<StateExtractor>();
-    private readonly BgiYoloPredictor _yoloPredictor;
     private CombatScenes? _combatScenes;
 
     public StateExtractor()
     {
-        _yoloPredictor = App.ServiceProvider.GetRequiredService<BgiOnnxFactory>().CreateYoloPredictor(BgiOnnxModel.BgiWorld);
+        _logger.LogInformation("状态提取器已初始化");
     }
 
     /// <summary>
-    /// 初始化战斗场景
+    /// 初始化战斗场景 - 复用BGI的CombatScenes
     /// </summary>
     public void InitializeCombatScenes(ImageRegion imageRegion)
     {
@@ -93,7 +71,7 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 提取结构化状态
+    /// 提取结构化状态 - 简化版，只提取必要信息
     /// </summary>
     public StructuredState ExtractStructuredState(ImageRegion imageRegion, StateExtractionOptions? options = null)
     {
@@ -105,21 +83,11 @@ public class StateExtractor
             // 提取游戏上下文 - 总是提取，因为很快
             state.GameContext = ExtractGameContext(imageRegion);
 
-            // 根据选项决定是否提取其他信息
-            if (options.ExtractPlayerTeam)
+            // 根据选项决定是否提取队伍信息
+            if (options.ExtractTeamInfo)
             {
                 state.PlayerTeam = ExtractPlayerTeam(imageRegion);
                 state.ActiveCharacterIndex = GetActiveCharacterIndex(imageRegion);
-            }
-
-            if (options.ExtractEnemies)
-            {
-                state.Enemies = ExtractEnemies(imageRegion);
-            }
-
-            if (options.ExtractCombatEvents)
-            {
-                state.CombatEvents = ExtractCombatEvents(imageRegion);
             }
         }
         catch (Exception e)
@@ -248,7 +216,7 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 提取玩家队伍状态
+    /// 提取玩家队伍状态 - 复用BGI的Avatar系统
     /// </summary>
     private List<CharacterState> ExtractPlayerTeam(ImageRegion imageRegion)
     {
@@ -264,10 +232,10 @@ public class StateExtractor
                     var characterState = new CharacterState
                     {
                         Name = avatar.Name,
-                        HpPercent = EstimateHpPercent(avatar, imageRegion),
-                        EnergyPercent = EstimateEnergyPercent(avatar, imageRegion),
-                        SkillCooldown = EstimateSkillCooldown(avatar, imageRegion),
-                        BurstAvailable = EstimateBurstAvailable(avatar, imageRegion)
+                        HpPercent = GetAvatarHpPercent(avatar, imageRegion),
+                        EnergyPercent = GetAvatarEnergyPercent(avatar),
+                        SkillCooldown = GetAvatarSkillCooldown(avatar),
+                        BurstAvailable = GetAvatarBurstAvailable(avatar)
                     };
                     team.Add(characterState);
                 }
@@ -309,75 +277,9 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 提取敌人状态
+    /// 获取角色血量百分比 - 复用BGI现有检测
     /// </summary>
-    private List<EnemyState> ExtractEnemies(ImageRegion imageRegion)
-    {
-        var enemies = new List<EnemyState>();
-
-        try
-        {
-            // 使用YOLO检测敌人
-            var detections = _yoloPredictor.Detect(imageRegion);
-
-            foreach (var kvp in detections)
-            {
-                var label = kvp.Key;
-                var rects = kvp.Value;
-
-                // 过滤敌人类型的检测结果
-                if (IsEnemyType(label))
-                {
-                    foreach (var rect in rects)
-                    {
-                        var enemy = new EnemyState
-                        {
-                            HpPercent = EstimateEnemyHp(rect, imageRegion),
-                            Distance = CalculateDistance(rect),
-                            PositionOnScreen = new float[] { rect.X + rect.Width / 2, rect.Y + rect.Height / 2 }
-                        };
-                        enemies.Add(enemy);
-                    }
-                }
-            }
-        }
-        catch (Exception e)
-        {
-            _logger.LogDebug(e, "敌人状态提取失败");
-        }
-
-        return enemies;
-    }
-
-    /// <summary>
-    /// 提取战斗事件
-    /// </summary>
-    private List<CombatEvent> ExtractCombatEvents(ImageRegion imageRegion)
-    {
-        var events = new List<CombatEvent>();
-
-        try
-        {
-            // 检测伤害数字
-            var damageEvents = DetectDamageNumbers(imageRegion);
-            events.AddRange(damageEvents);
-
-            // 检测元素反应
-            var reactionEvents = DetectElementalReactions(imageRegion);
-            events.AddRange(reactionEvents);
-        }
-        catch (Exception e)
-        {
-            _logger.LogDebug(e, "战斗事件提取失败");
-        }
-
-        return events;
-    }
-
-    /// <summary>
-    /// 估算血量百分比 - 使用BGI现有的快速检测
-    /// </summary>
-    private float EstimateHpPercent(Avatar avatar, ImageRegion imageRegion)
+    private static float GetAvatarHpPercent(Avatar avatar, ImageRegion imageRegion)
     {
         try
         {
@@ -386,9 +288,6 @@ public class StateExtractor
             {
                 return 0.3f; // 低血量估计为30%
             }
-
-            // TODO: 实现更精确的血量识别逻辑
-            // 可以通过分析血条颜色和长度来估算
             return 1.0f; // 默认满血
         }
         catch
@@ -398,14 +297,14 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 估算能量百分比 - Placeholder实现
+    /// 获取角色能量百分比 - 复用BGI的Avatar系统
     /// </summary>
-    private float EstimateEnergyPercent(Avatar avatar, ImageRegion imageRegion)
+    private static float GetAvatarEnergyPercent(Avatar avatar)
     {
         try
         {
-            // TODO: 复杂实现 - 需要分析能量球的颜色和数量
-            // 暂时返回默认值
+            // 复用BGI的能量检测，如果有的话
+            // 暂时返回默认值，可以后续扩展
             return 0.5f;
         }
         catch
@@ -415,15 +314,19 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 估算技能冷却时间 - Placeholder实现
+    /// 获取角色技能冷却时间 - 复用BGI的CD管理
     /// </summary>
-    private float EstimateSkillCooldown(Avatar avatar, ImageRegion imageRegion)
+    private static float GetAvatarSkillCooldown(Avatar avatar)
     {
         try
         {
-            // TODO: 复杂实现 - 需要OCR识别技能图标上的数字
-            // 暂时返回默认值
-            return 0.0f;
+            // 复用BGI的技能CD检测
+            if (avatar.IsSkillReady())
+            {
+                return 0.0f; // 技能可用
+            }
+            // 使用BGI的GetSkillCdSeconds方法获取精确CD时间
+            return (float)avatar.GetSkillCdSeconds();
         }
         catch
         {
@@ -432,15 +335,14 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 估算爆发是否可用 - Placeholder实现
+    /// 获取角色爆发是否可用 - 复用BGI的爆发检测
     /// </summary>
-    private bool EstimateBurstAvailable(Avatar avatar, ImageRegion imageRegion)
+    private static bool GetAvatarBurstAvailable(Avatar avatar)
     {
         try
         {
-            // TODO: 复杂实现 - 需要检测爆发图标的亮度和颜色
-            // 暂时返回默认值
-            return false;
+            // 复用BGI的爆发检测 - IsBurstReady是属性，不是方法
+            return avatar.IsBurstReady;
         }
         catch
         {
@@ -448,102 +350,90 @@ public class StateExtractor
         }
     }
 
-    /// <summary>
-    /// 检查是否为敌人类型 - 基于BGI的YOLO标签
-    /// </summary>
-    private bool IsEnemyType(string label)
-    {
-        if (string.IsNullOrEmpty(label))
-            return false;
 
-        // 根据BGI的YOLO模型标签判断是否为敌人
-        var enemyLabels = new[]
-        {
-            "monster", "enemy", "hilichurl", "slime", "abyss",
-            "fatui", "treasure_hoarder", "ruin", "specter",
-            "whopperflower", "mitachurl", "samachurl", "lawachurl",
-            "cicin", "agent", "skirmisher", "mirror_maiden",
-            "pyro_hypostasis", "electro_hypostasis", "geo_hypostasis",
-            "cryo_hypostasis", "hydro_hypostasis", "anemo_hypostasis",
-            "dendro_hypostasis", "regisvine", "wolf", "childe",
-            "dvalin", "azhdaha", "signora", "raiden", "scaramouche"
-        };
-
-        var lowerLabel = label.ToLower();
-        return enemyLabels.Any(enemyLabel => lowerLabel.Contains(enemyLabel));
-    }
 
     /// <summary>
-    /// 估算敌人血量
+    /// 从输入监控器生成脚本格式的动作 - 基于action_report.md的设计
     /// </summary>
-    private float EstimateEnemyHp(Rect rect, ImageRegion imageRegion)
+    public string GenerateActionScriptFromInput(InputMonitor inputMonitor, long timeWindowMs = 200)
     {
         try
         {
-            // 这里应该实现具体的敌人血量识别逻辑
-            // 暂时返回默认值
-            return 1.0f;
-        }
-        catch
-        {
-            return 1.0f;
-        }
-    }
-
-    /// <summary>
-    /// 计算距离
-    /// </summary>
-    private float CalculateDistance(Rect rect)
-    {
-        try
-        {
-            // 基于检测框大小估算距离
-            var area = rect.Width * rect.Height;
-            return Math.Max(0.1f, 1000.0f / area); // 简单的距离估算
-        }
-        catch
-        {
-            return 10.0f;
-        }
-    }
-
-    /// <summary>
-    /// 检测伤害数字
-    /// </summary>
-    private List<CombatEvent> DetectDamageNumbers(ImageRegion imageRegion)
-    {
-        var events = new List<CombatEvent>();
-        
-        try
-        {
-            // 这里应该实现伤害数字检测逻辑
-            // 暂时返回空列表
+            // 直接使用InputMonitor的脚本生成功能
+            return inputMonitor.GenerateActionScript(timeWindowMs);
         }
         catch (Exception e)
         {
-            _logger.LogDebug(e, "伤害数字检测失败");
+            _logger.LogWarning(e, "从输入生成动作脚本失败");
+            return $"wait({timeWindowMs / 1000.0:F1})";
         }
-
-        return events;
     }
 
     /// <summary>
-    /// 检测元素反应
+    /// 验证生成的动作脚本是否有效 - 复用BGI的脚本解析器
     /// </summary>
-    private List<CombatEvent> DetectElementalReactions(ImageRegion imageRegion)
+    public bool ValidateActionScript(string actionScript)
     {
-        var events = new List<CombatEvent>();
-        
         try
         {
-            // 这里应该实现元素反应检测逻辑
-            // 暂时返回空列表
+            if (string.IsNullOrWhiteSpace(actionScript))
+            {
+                return false;
+            }
+
+            // 使用BGI现有的脚本解析器验证语法
+            var commands = CombatScriptParser.ParseLineCommands(actionScript, CombatScriptParser.CurrentAvatarName);
+            return commands.Count > 0;
         }
         catch (Exception e)
         {
-            _logger.LogDebug(e, "元素反应检测失败");
+            _logger.LogDebug(e, "动作脚本验证失败: {Script}", actionScript);
+            return false;
         }
+    }
 
-        return events;
+    /// <summary>
+    /// 生成动作序列 - 将多个时间窗口的动作合并为Action Chunk
+    /// </summary>
+    public string GenerateActionChunk(InputMonitor inputMonitor, int chunkCount = 5, long timeWindowMs = 200)
+    {
+        try
+        {
+            var actions = new List<string>();
+
+            for (int i = 0; i < chunkCount; i++)
+            {
+                var actionScript = inputMonitor.GenerateActionScript(timeWindowMs);
+                if (!string.IsNullOrWhiteSpace(actionScript) && !actionScript.StartsWith("wait"))
+                {
+                    actions.Add(actionScript);
+                }
+            }
+
+            if (actions.Count == 0)
+            {
+                return $"wait({timeWindowMs * chunkCount / 1000.0:F1})";
+            }
+
+            // 合并动作，去重连续的相同动作
+            var mergedActions = new List<string>();
+            string lastAction = string.Empty;
+
+            foreach (var action in actions)
+            {
+                if (action != lastAction)
+                {
+                    mergedActions.Add(action);
+                    lastAction = action;
+                }
+            }
+
+            return string.Join(",", mergedActions);
+        }
+        catch (Exception e)
+        {
+            _logger.LogWarning(e, "生成动作序列失败");
+            return $"wait({timeWindowMs * chunkCount / 1000.0:F1})";
+        }
     }
 }
