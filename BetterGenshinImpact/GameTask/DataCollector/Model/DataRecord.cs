@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Windows.Forms;
 using Newtonsoft.Json;
 
 namespace BetterGenshinImpact.GameTask.DataCollector.Model;
@@ -44,6 +45,39 @@ public class DataRecord
     /// </summary>
     [JsonProperty("structured_state")]
     public StructuredState StructuredState { get; set; } = new();
+
+    /// <summary>
+    /// 是否可以被回写修改 - 用于支持按键按下帧的回写
+    /// 此字段不会序列化到JSON
+    /// </summary>
+    [JsonIgnore]
+    public bool CanBeBackfilled { get; set; } = true;
+}
+
+/// <summary>
+/// 待回写的动作事件 - 用于支持按键按下帧回写
+/// </summary>
+public class PendingActionEvent
+{
+    /// <summary>
+    /// 按键
+    /// </summary>
+    public Keys Key { get; set; }
+
+    /// <summary>
+    /// 按下时间戳
+    /// </summary>
+    public long StartTime { get; set; }
+
+    /// <summary>
+    /// 按下时的帧索引 - 用于回写
+    /// </summary>
+    public int StartFrameIndex { get; set; }
+
+    /// <summary>
+    /// 重复次数
+    /// </summary>
+    public int RepeatCount { get; set; } = 0;
 }
 
 

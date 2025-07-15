@@ -2,6 +2,7 @@ using BetterGenshinImpact.Core.Config;
 using BetterGenshinImpact.Core.Recognition;
 using BetterGenshinImpact.Core.Recognition.OCR;
 using BetterGenshinImpact.Core.Recognition.OpenCv;
+using BetterGenshinImpact.Core.Recorder;
 using BetterGenshinImpact.Core.Simulator;
 using BetterGenshinImpact.GameTask.Common;
 using BetterGenshinImpact.GameTask.DataCollector.Model;
@@ -64,6 +65,7 @@ public class DataCollectorTask : ISoloTask
         _taskParam = taskParam;
         _config = TaskContext.Instance().Config.DataCollectorConfig;
         _inputMonitor = new InputMonitor();
+        _inputMonitor.OnBackfillAction = OnBackfillAction;
         _stateExtractor = new StateExtractor();
     }
 
@@ -320,6 +322,48 @@ public class DataCollectorTask : ISoloTask
         catch (Exception e)
         {
             _logger.LogError(e, "保存会话数据时发生异常");
+        }
+    }
+
+    /// <summary>
+    /// 回写动作脚本到指定帧 - 支持按键按下帧回写
+    /// </summary>
+    private void OnBackfillAction(int frameIndex, string actionScript)
+    {
+        lock (_bufferLock)
+        {
+            try
+            {
+                // 查找目标帧
+                var targetRecord = _dataBuffer.FirstOrDefault(r => r.FrameIndex == frameIndex);
+                if (targetRecord != null && targetRecord.CanBeBackfilled)
+                {
+                    // 合并动作脚本
+                    if (string.IsNullOrEmpty(targetRecord.ActionScript) || targetRecord.ActionScript == "wait(0.2)")
+                    {
+                        targetRecord.ActionScript = actionScript;
+                    }
+                    else
+                    {
+                        // 使用&连接同步动作
+                        targetRecord.ActionScript = $"{targetRecord.ActionScript}&{actionScript}";
+                    }
+
+                    _logger.LogDebug("成功回写动作脚本到Frame {Frame}: {Script}", frameIndex, actionScript);
+                }
+                else if (targetRecord == null)
+                {
+                    _logger.LogWarning("回写目标帧不存在: Frame {Frame}, Script: {Script}", frameIndex, actionScript);
+                }
+                else
+                {
+                    _logger.LogWarning("回写目标帧不可修改: Frame {Frame}, Script: {Script}", frameIndex, actionScript);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "回写动作脚本时发生异常: Frame {Frame}, Script: {Script}", frameIndex, actionScript);
+            }
         }
     }
 
@@ -754,6 +798,18 @@ private bool CheckDomainStart()
 
         try
         {
+            // 设置当前帧索引用于回写逻辑
+            GlobalKeyMouseRecord.Instance.CurrentFrameIndex = _frameIndex;
+
+            // 定期清理超时的待回写事件（每100帧清理一次）
+            if (_frameIndex % 100 == 0)
+            {
+                _inputMonitor.CleanupTimeoutPendingActions(frameStartTime);
+            }
+
+            // 重置当前帧的鼠标移动累积
+            _inputMonitor.ResetFrameMouseDelta();
+
             using var imageRegion = TaskControl.CaptureToRectArea();
 
             // 生成脚本格式的动作 - 基于action_report.md的设计

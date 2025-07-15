@@ -126,24 +126,26 @@ public class StateExtractor
 
         try
         {
-            // 检测各种UI状态
+            // 检测各种UI状态 - 按优先级检测，避免误判
             var inMainUi = Bv.IsInMainUi(imageRegion);
             var inBigMapUi = Bv.IsInBigMapUi(imageRegion);
-            var inAnyClosableUi = Bv.IsInAnyClosableUi(imageRegion);
             var inPartyViewUi = Bv.IsInPartyViewUi(imageRegion);
             var inTalk = Bv.IsInTalkUi(imageRegion);
             var inRevive = Bv.IsInRevivePrompt(imageRegion);
             var loading = DetectLoadingState(imageRegion);
 
-            // 更精确的菜单检测
-            context.InMenu = inMainUi || inBigMapUi || inAnyClosableUi || inPartyViewUi;
+            // 只有在明确的UI界面时才检测IsInAnyClosableUi，避免大世界误判
+            var inAnyClosableUi = (inMainUi || inBigMapUi || inPartyViewUi) && Bv.IsInAnyClosableUi(imageRegion);
+
+            // 精确的菜单检测 - 只有明确的UI界面才算菜单
+            context.InMenu = inMainUi || inBigMapUi || inPartyViewUi || inAnyClosableUi;
 
             // 更精确的战斗检测 - 只有在非UI界面且非对话时才可能在战斗
             context.InCombat = !context.InMenu && !inTalk && !inRevive && !loading && DetectCombatState(imageRegion);
 
             context.Loading = loading;
 
-            // 确定游戏阶段 - 优先级顺序很重要
+            // 确定游戏阶段 - 修复优先级，避免大世界被误判为菜单
             if (loading)
                 context.GamePhase = "loading";
             else if (inRevive)
@@ -152,12 +154,16 @@ public class StateExtractor
                 context.GamePhase = "dialogue";
             else if (inMainUi)
                 context.GamePhase = "menu";
-            else if (inBigMapUi || inAnyClosableUi || inPartyViewUi)
+            else if (inBigMapUi)
+                context.GamePhase = "menu";
+            else if (inPartyViewUi)
+                context.GamePhase = "menu";
+            else if (inAnyClosableUi)
                 context.GamePhase = "menu";
             else if (context.InCombat)
                 context.GamePhase = "combat";
             else
-                context.GamePhase = "exploration";
+                context.GamePhase = "exploration"; // 默认为探索状态
         }
         catch (Exception e)
         {
@@ -310,9 +316,13 @@ public class StateExtractor
     {
         try
         {
-            // 复用BGI的能量检测，如果有的话
-            // 暂时返回默认值，可以后续扩展
-            return 0.5f;
+            // BGI没有直接的能量检测，使用爆发可用性推测
+            // 如果爆发可用，能量应该是满的
+            if (avatar.IsBurstReady)
+            {
+                return 1.0f; // 爆发可用，能量满
+            }
+            return 0.5f; // 默认50%能量
         }
         catch
         {
@@ -388,14 +398,20 @@ public class StateExtractor
                 return false;
             }
 
-            // 对于包含sw()的脚本，直接认为有效（因为BGI解析器不认识这个格式）
-            if (actionScript.Contains("sw("))
+            // 对于包含sw()或pause()的脚本，直接认为有效（因为BGI解析器不认识这些格式）
+            if (actionScript.Contains("sw(") || actionScript.Contains("pause("))
             {
                 return true;
             }
 
             // 对于wait()脚本，直接认为有效
             if (actionScript.StartsWith("wait("))
+            {
+                return true;
+            }
+
+            // 对于包含&分隔符的脚本，直接认为有效（新的同步格式）
+            if (actionScript.Contains('&'))
             {
                 return true;
             }
@@ -447,7 +463,8 @@ public class StateExtractor
                 }
             }
 
-            return string.Join(",", mergedActions);
+            // 使用&连接同步动作，符合新的格式规范
+            return string.Join("&", mergedActions);
         }
         catch (Exception e)
         {

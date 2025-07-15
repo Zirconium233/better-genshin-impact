@@ -36,6 +36,10 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
     public Action<object?, KeyEventArgs>? InputMonitorKeyUp { get; set; }
     public Action<object?, MouseEventExtArgs>? InputMonitorMouseDown { get; set; }
     public Action<object?, MouseEventExtArgs>? InputMonitorMouseUp { get; set; }
+    public Action<object?, MouseState, uint>? InputMonitorMouseMoveBy { get; set; }
+
+    // 当前帧索引 - 用于回写逻辑
+    public int CurrentFrameIndex { get; set; } = -1;
 
     public GlobalKeyMouseRecord()
     {
@@ -211,6 +215,9 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
         }
         // Debug.WriteLine($"MouseMoveBy: {state.X}, {state.Y}");
         _recorder?.MouseMoveBy(state, time);
+
+        // 通知InputMonitor
+        InputMonitorMouseMoveBy?.Invoke(this, state, time);
     }
 }
 
