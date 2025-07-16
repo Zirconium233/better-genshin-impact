@@ -558,6 +558,9 @@ public class InputMonitor : IDisposable
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
+        // 添加调试日志，检查是否收到鼠标移动事件
+        _logger.LogDebug("收到鼠标移动事件: X={X}, Y={Y}, 时间={Time}", state.X, state.Y, timestamp);
+
         lock (_lockObject)
         {
             try
@@ -588,7 +591,7 @@ public class InputMonitor : IDisposable
                         _rawInputRecords.Enqueue(rawRecord);
                         WriteRawInputRecord(rawRecord);
 
-                        _logger.LogDebug("记录鼠标移动: dx={X}, dy={Y}", _accumulatedMouseX, _accumulatedMouseY);
+                        _logger.LogInformation("记录鼠标移动: dx={X}, dy={Y}", _accumulatedMouseX, _accumulatedMouseY);
                     }
 
                     // 重置累积值和时间

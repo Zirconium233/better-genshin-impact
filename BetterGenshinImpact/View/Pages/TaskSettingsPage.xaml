@@ -2307,6 +2307,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -2376,24 +2377,39 @@
                                   ValidationMode="InvalidInputOverwritten"
                                   Value="{Binding Config.DataCollectorConfig.ScreenshotQuality, Mode=TwoWay}" />
 
-                    <!-- 自动触发器 -->
+                    <!-- 状态检测缓存间隔 -->
                     <ui:TextBlock Grid.Row="4"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="状态检测缓存间隔 (毫秒)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="4"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="100"
+                                  Maximum="5000"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.DataCollectorConfig.GameContextCacheIntervalMs, Mode=TwoWay}" />
+
+                    <!-- 自动触发器 -->
+                    <ui:TextBlock Grid.Row="5"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="启用自动触发器"
                                   VerticalAlignment="Center" />
-                    <ui:ToggleSwitch Grid.Row="4"
+                    <ui:ToggleSwitch Grid.Row="5"
                                      Grid.Column="1"
                                      Margin="0,0,36,8"
                                      IsChecked="{Binding Config.DataCollectorConfig.AutoTriggerEnabled, Mode=TwoWay}" />
 
                     <!-- 开始触发器类型 -->
-                    <ui:TextBlock Grid.Row="5"
+                    <ui:TextBlock Grid.Row="6"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="开始触发器"
                                   VerticalAlignment="Center" />
-                    <ComboBox Grid.Row="5"
+                    <ComboBox Grid.Row="6"
                               Grid.Column="1"
                               Margin="0,0,36,8"
                               MinWidth="150"
@@ -2403,12 +2419,12 @@
                               SelectedValue="{Binding Config.DataCollectorConfig.StartTriggerType, Mode=TwoWay}" />
 
                     <!-- 结束触发器类型 -->
-                    <ui:TextBlock Grid.Row="6"
+                    <ui:TextBlock Grid.Row="7"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="结束触发器"
                                   VerticalAlignment="Center" />
-                    <ComboBox Grid.Row="6"
+                    <ComboBox Grid.Row="7"
                               Grid.Column="1"
                               Margin="0,0,36,8"
                               MinWidth="150"
@@ -2418,7 +2434,7 @@
                               SelectedValue="{Binding Config.DataCollectorConfig.EndTriggerType, Mode=TwoWay}" />
 
                     <!-- 其他选项 -->
-                    <StackPanel Grid.Row="7"
+                    <StackPanel Grid.Row="8"
                                 Grid.Column="0"
                                 Grid.ColumnSpan="2"
                                 Orientation="Horizontal"
@@ -2435,8 +2451,14 @@
                         <ui:ToggleSwitch Margin="0,0,16,0"
                                          Content="采集无动作帧"
                                          IsChecked="{Binding Config.DataCollectorConfig.CollectNoActionFrames, Mode=TwoWay}" />
-                        <ui:ToggleSwitch Content="采集结构化状态"
+                        <ui:ToggleSwitch Margin="0,0,16,0"
+                                         Content="采集结构化状态"
                                          IsChecked="{Binding Config.DataCollectorConfig.CollectStructuredState, Mode=TwoWay}" />
+                        <ui:ToggleSwitch Margin="0,0,16,0"
+                                         Content="启用战斗检测"
+                                         IsChecked="{Binding Config.DataCollectorConfig.EnableCombatDetection, Mode=TwoWay}" />
+                        <ui:ToggleSwitch Content="启用秘境检测"
+                                         IsChecked="{Binding Config.DataCollectorConfig.EnableDomainDetection, Mode=TwoWay}" />
                     </StackPanel>
                 </Grid>
             </StackPanel>

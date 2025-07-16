@@ -19,27 +19,14 @@ using Compunet.YoloSharp;
 namespace BetterGenshinImpact.GameTask.DataCollector;
 
 /// <summary>
-/// 简化的状态提取选项
+/// 简化的状态提取选项 - 队伍信息始终提取（用于菜单检测）
 /// </summary>
 public class StateExtractionOptions
 {
     /// <summary>
-    /// 是否提取队伍角色信息（用于大模型切人）
-    /// </summary>
-    public bool ExtractTeamInfo { get; set; } = true;
-
-    /// <summary>
-    /// 默认选项 - 只提取基本信息
+    /// 默认选项
     /// </summary>
     public static StateExtractionOptions Default => new();
-
-    /// <summary>
-    /// 完整选项 - 提取队伍信息
-    /// </summary>
-    public static StateExtractionOptions Full => new()
-    {
-        ExtractTeamInfo = true
-    };
 }
 
 /// <summary>
@@ -59,6 +46,10 @@ public class StateExtractor
     private long _lastGameContextUpdateTime = 0;
     private long _gameContextCacheIntervalMs = 1000; // 1秒缓存间隔，可配置
 
+    // 配置选项
+    private bool _enableCombatDetection = false;
+    private bool _enableDomainDetection = false;
+
     public StateExtractor()
     {
         _logger.LogInformation("状态提取器已初始化");
@@ -72,6 +63,22 @@ public class StateExtractor
     {
         _gameContextCacheIntervalMs = Math.Max(100, intervalMs); // 最小100ms
         _logger.LogInformation("游戏上下文缓存间隔设置为: {Interval}ms", _gameContextCacheIntervalMs);
+    }
+
+    /// <summary>
+    /// 配置状态检测选项
+    /// </summary>
+    /// <param name="enableCombatDetection">是否启用战斗检测</param>
+    /// <param name="enableDomainDetection">是否启用秘境检测</param>
+    /// <param name="cacheIntervalMs">缓存间隔（毫秒）</param>
+    public void ConfigureDetection(bool enableCombatDetection, bool enableDomainDetection, int cacheIntervalMs)
+    {
+        _enableCombatDetection = enableCombatDetection;
+        _enableDomainDetection = enableDomainDetection;
+        SetGameContextCacheInterval(cacheIntervalMs);
+
+        _logger.LogInformation("状态检测配置: 战斗检测={Combat}, 秘境检测={Domain}, 缓存间隔={Cache}ms",
+            enableCombatDetection, enableDomainDetection, cacheIntervalMs);
     }
 
     /// <summary>
@@ -94,7 +101,7 @@ public class StateExtractor
     /// <summary>
     /// 提取结构化状态 - 优化版，高效复用检测结果
     /// </summary>
-    public StructuredState ExtractStructuredState(ImageRegion imageRegion, StateExtractionOptions? options = null)
+    public StructuredState ExtractStructuredState(ImageRegion imageRegion)
     {
         var state = new StructuredState();
 
@@ -171,8 +178,8 @@ public class StateExtractor
         var context = new GameContext
         {
             InMenu = false,
-            InCombat = DetectInCombat(imageRegion),
-            InDomain = DetectInDomain(imageRegion)
+            InCombat = _enableCombatDetection && DetectInCombat(imageRegion),
+            InDomain = _enableDomainDetection && DetectInDomain(imageRegion)
         };
 
         // 更新缓存状态

@@ -1,4 +1,5 @@
 using BetterGenshinImpact.Core.Config;
+using BetterGenshinImpact.Core.Monitor;
 using BetterGenshinImpact.Core.Recognition;
 using BetterGenshinImpact.Core.Recognition.OCR;
 using BetterGenshinImpact.Core.Recognition.OpenCv;
@@ -72,8 +73,93 @@ public class DataCollectorTask : ISoloTask
         _inputMonitor.IsInMenuCallback = () => _lastGameContext?.InMenu ?? false;
         _stateExtractor = new StateExtractor();
 
+        // 配置状态检测选项
+        _stateExtractor.ConfigureDetection(
+            _taskParam.EnableCombatDetection,
+            _taskParam.EnableDomainDetection,
+            _taskParam.GameContextCacheIntervalMs);
+
         // 启用数据收集模式，确保鼠标移动事件不被过滤
         GlobalKeyMouseRecord.Instance.IsDataCollectionMode = true;
+
+        // 确保DirectInputMonitor启动以捕获鼠标移动
+        EnsureDirectInputMonitorStarted();
+    }
+
+    /// <summary>
+    /// 确保DirectInputMonitor启动以捕获鼠标移动
+    /// </summary>
+    private void EnsureDirectInputMonitorStarted()
+    {
+        try
+        {
+            // 检查GlobalKeyMouseRecord是否有DirectInputMonitor实例
+            var globalRecord = GlobalKeyMouseRecord.Instance;
+
+            // 使用反射检查_directInputMonitor字段是否为null
+            var directInputMonitorField = typeof(GlobalKeyMouseRecord).GetField("_directInputMonitor",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+            if (directInputMonitorField != null)
+            {
+                var directInputMonitor = directInputMonitorField.GetValue(globalRecord);
+                if (directInputMonitor == null)
+                {
+                    // 创建并启动DirectInputMonitor
+                    var newMonitor = new DirectInputMonitor();
+                    directInputMonitorField.SetValue(globalRecord, newMonitor);
+                    newMonitor.Start();
+                    _logger.LogInformation("为数据收集启动了DirectInputMonitor");
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            _logger.LogWarning(e, "启动DirectInputMonitor时发生异常，鼠标移动可能无法正常记录");
+        }
+    }
+
+    /// <summary>
+    /// 清理DirectInputMonitor
+    /// </summary>
+    private void CleanupDirectInputMonitor()
+    {
+        try
+        {
+            // 禁用数据收集模式
+            GlobalKeyMouseRecord.Instance.IsDataCollectionMode = false;
+
+            // 检查GlobalKeyMouseRecord是否有DirectInputMonitor实例
+            var globalRecord = GlobalKeyMouseRecord.Instance;
+
+            // 使用反射检查_directInputMonitor字段
+            var directInputMonitorField = typeof(GlobalKeyMouseRecord).GetField("_directInputMonitor",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+            if (directInputMonitorField != null)
+            {
+                var directInputMonitor = directInputMonitorField.GetValue(globalRecord);
+                if (directInputMonitor != null)
+                {
+                    // 只有在不是录制状态时才清理DirectInputMonitor
+                    if (GlobalKeyMouseRecord.Instance.Status != KeyMouseRecorderStatus.Recording)
+                    {
+                        // 停止并清理DirectInputMonitor
+                        if (directInputMonitor is DirectInputMonitor monitor)
+                        {
+                            monitor.Stop();
+                            monitor.Dispose();
+                        }
+                        directInputMonitorField.SetValue(globalRecord, null);
+                        _logger.LogInformation("已清理数据收集的DirectInputMonitor");
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            _logger.LogWarning(e, "清理DirectInputMonitor时发生异常");
+        }
     }
 
     /// <summary>
@@ -83,6 +169,13 @@ public class DataCollectorTask : ISoloTask
     public void UpdateTaskParam(bool generateNewSessionId = false)
     {
         _taskParam.SetDefault(generateNewSessionId);
+
+        // 更新状态检测器配置
+        _stateExtractor.ConfigureDetection(
+            _taskParam.EnableCombatDetection,
+            _taskParam.EnableDomainDetection,
+            _taskParam.GameContextCacheIntervalMs);
+
         if (generateNewSessionId)
         {
             _logger.LogInformation("任务参数已更新为最新配置，并生成了新的会话ID: {SessionId}", _taskParam.SessionId);
@@ -861,13 +954,8 @@ private bool CheckDomainStart()
                 var extractStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
                 // 根据配置选择提取选项，默认只提取基本信息
-                var extractionOptions = StateExtractionOptions.Default;
-                if (_config.CollectPlayerTeam)
-                {
-                    extractionOptions.ExtractTeamInfo = true;
-                }
-
-                structuredState = _stateExtractor.ExtractStructuredState(imageRegion, extractionOptions);
+                // 队伍信息始终提取（用于菜单检测），不再需要配置选项
+                structuredState = _stateExtractor.ExtractStructuredState(imageRegion);
                 var extractTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - extractStartTime;
 
                 // 更新游戏上下文缓存，用于菜单状态检查
@@ -1039,6 +1127,16 @@ private bool CheckDomainStart()
             catch (Exception e)
             {
                 _logger.LogWarning(e, "清理输入监控器时发生异常");
+            }
+
+            // 清理DirectInputMonitor（如果是由DataCollector启动的）
+            try
+            {
+                CleanupDirectInputMonitor();
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning(e, "清理DirectInputMonitor时发生异常");
             }
 
             // 清理内部取消令牌源

@@ -59,6 +59,21 @@ public class DataCollectorParam : BaseTaskParam
     /// </summary>
     public int NoActionFrameInterval { get; set; } = 500;
 
+    /// <summary>
+    /// 是否启用战斗状态检测
+    /// </summary>
+    public bool EnableCombatDetection { get; set; } = false;
+
+    /// <summary>
+    /// 是否启用秘境状态检测
+    /// </summary>
+    public bool EnableDomainDetection { get; set; } = false;
+
+    /// <summary>
+    /// 游戏上下文缓存间隔 (毫秒)
+    /// </summary>
+    public int GameContextCacheIntervalMs { get; set; } = 1000;
+
     public DataCollectorParam() : base()
     {
     }
@@ -83,6 +98,9 @@ public class DataCollectorParam : BaseTaskParam
         ActionDetectionSensitivity = config.ActionDetectionSensitivity;
         CollectNoActionFrames = config.CollectNoActionFrames;
         NoActionFrameInterval = config.NoActionFrameInterval;
+        EnableCombatDetection = config.EnableCombatDetection;
+        EnableDomainDetection = config.EnableDomainDetection;
+        GameContextCacheIntervalMs = config.GameContextCacheIntervalMs;
 
         // 根据参数决定是否生成新的会话ID
         if (generateNewSessionId)

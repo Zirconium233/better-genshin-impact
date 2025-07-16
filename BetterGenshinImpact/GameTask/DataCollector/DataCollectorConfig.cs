@@ -118,6 +118,24 @@ public partial class DataCollectorConfig : ObservableObject
     /// </summary>
     [ObservableProperty]
     private bool _collectCombatEvents = false; // 默认关闭，性能消耗大
+
+    /// <summary>
+    /// 是否启用战斗状态检测
+    /// </summary>
+    [ObservableProperty]
+    private bool _enableCombatDetection = false; // 默认关闭，性能开销大
+
+    /// <summary>
+    /// 是否启用秘境状态检测
+    /// </summary>
+    [ObservableProperty]
+    private bool _enableDomainDetection = false; // 默认关闭，性能开销大
+
+    /// <summary>
+    /// 游戏上下文缓存间隔 (毫秒)
+    /// </summary>
+    [ObservableProperty]
+    private int _gameContextCacheIntervalMs = 1000; // 默认1秒缓存间隔
 }
 
 /// <summary>
