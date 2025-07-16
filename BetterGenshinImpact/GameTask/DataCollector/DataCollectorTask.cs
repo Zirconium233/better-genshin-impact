@@ -47,6 +47,9 @@ public class DataCollectorTask : ISoloTask
     private readonly List<DataRecord> _dataBuffer = new();
     private readonly object _bufferLock = new();
 
+    // 缓存最后的游戏上下文，用于菜单状态检查
+    private GameContext? _lastGameContext;
+
     private CancellationToken _ct;
     private CancellationTokenSource? _internalCts;
     private Timer? _collectionTimer;
@@ -66,7 +69,11 @@ public class DataCollectorTask : ISoloTask
         _config = TaskContext.Instance().Config.DataCollectorConfig;
         _inputMonitor = new InputMonitor();
         _inputMonitor.OnBackfillAction = OnBackfillAction;
+        _inputMonitor.IsInMenuCallback = () => _lastGameContext?.InMenu ?? false;
         _stateExtractor = new StateExtractor();
+
+        // 启用数据收集模式，确保鼠标移动事件不被过滤
+        GlobalKeyMouseRecord.Instance.IsDataCollectionMode = true;
     }
 
     /// <summary>
@@ -807,9 +814,6 @@ private bool CheckDomainStart()
                 _inputMonitor.CleanupTimeoutPendingActions(frameStartTime);
             }
 
-            // 重置当前帧的鼠标移动累积
-            _inputMonitor.ResetFrameMouseDelta();
-
             using var imageRegion = TaskControl.CaptureToRectArea();
 
             // 生成脚本格式的动作 - 基于action_report.md的设计
@@ -865,6 +869,9 @@ private bool CheckDomainStart()
 
                 structuredState = _stateExtractor.ExtractStructuredState(imageRegion, extractionOptions);
                 var extractTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - extractStartTime;
+
+                // 更新游戏上下文缓存，用于菜单状态检查
+                _lastGameContext = structuredState.GameContext;
 
                 // 检查处理时间是否过长
                 var frameInterval = 1000 / _taskParam.CollectionFps;

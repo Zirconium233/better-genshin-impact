@@ -32,10 +32,11 @@ public class InputMonitor : IDisposable
     private readonly Dictionary<Keys, KeyState> _keyStates = new();
     private readonly Dictionary<string, MouseButtonState> _mouseStates = new();
 
-    // 鼠标移动累积 - 优化版，每帧记录最终位置差
-    private int _frameMouseDeltaX = 0;
-    private int _frameMouseDeltaY = 0;
-    private long _lastMouseResetTime = 0;
+    // 鼠标移动累积 - 200ms频率记录
+    private int _accumulatedMouseX = 0;
+    private int _accumulatedMouseY = 0;
+    private long _lastMouseRecordTime = 0;
+    private const int MouseRecordInterval = 200; // 200ms记录一次
 
     // 脚本生成缓存
     private readonly Queue<ActionEvent> _actionEvents = new();
@@ -43,8 +44,17 @@ public class InputMonitor : IDisposable
     // 待回写的动作事件 - 用于支持按键按下帧回写
     private readonly Dictionary<Keys, PendingActionEvent> _pendingActions = new();
 
+    // F1暂停状态跟踪
+    private bool _isPaused = false;
+    private long _pauseStartTime = 0;
+    private int _pauseStartFrameIndex = -1;
+    private bool _waitingForSecondF1 = false;
+
     // 回写回调 - 用于通知DataCollectorTask进行回写
     public Action<int, string>? OnBackfillAction { get; set; }
+
+    // 菜单状态回调 - 用于检查是否在菜单中
+    public Func<bool>? IsInMenuCallback { get; set; }
 
     // 原始输入文件写入
     private string _rawInputFilePath = string.Empty;
@@ -133,6 +143,28 @@ public class InputMonitor : IDisposable
         {
             try
             {
+                // 特殊处理F1暂停逻辑
+                if (e.KeyCode == Keys.F1)
+                {
+                    HandleF1KeyDown(timestamp);
+                    return;
+                }
+
+                // 如果正在暂停中或在菜单中，忽略所有其他输入
+                if (_isPaused)
+                {
+                    _logger.LogDebug("暂停中，忽略输入: {Key}", e.KeyCode);
+                    return;
+                }
+
+                if (IsInMenuCallback?.Invoke() == true)
+                {
+                    _logger.LogDebug("菜单中，忽略输入: {Key}", e.KeyCode);
+                    // 菜单状态时，强制完成所有待回写事件
+                    ForceCompleteAllPendingActions();
+                    return;
+                }
+
                 // 记录原始输入
                 var rawRecord = new RawInputRecord
                 {
@@ -183,6 +215,61 @@ public class InputMonitor : IDisposable
     }
 
     /// <summary>
+    /// 处理F1暂停按键逻辑
+    /// </summary>
+    private void HandleF1KeyDown(long timestamp)
+    {
+        if (!_waitingForSecondF1)
+        {
+            // 第一次按下F1，开始暂停
+            _isPaused = true;
+            _pauseStartTime = timestamp;
+            _pauseStartFrameIndex = GlobalKeyMouseRecord.Instance.CurrentFrameIndex;
+            _waitingForSecondF1 = true;
+
+            _logger.LogInformation("F1暂停开始，Frame: {Frame}", _pauseStartFrameIndex);
+
+            // 记录原始输入
+            var rawRecord = new RawInputRecord
+            {
+                Type = "KeyDown",
+                Key = "F1",
+                Timestamp = timestamp
+            };
+            _rawInputRecords.Enqueue(rawRecord);
+            WriteRawInputRecord(rawRecord);
+        }
+        else
+        {
+            // 第二次按下F1，结束暂停
+            var pauseDuration = (timestamp - _pauseStartTime) / 1000.0;
+            _isPaused = false;
+            _waitingForSecondF1 = false;
+
+            // 生成pause脚本并回写到第一次按下的帧
+            var pauseScript = $"pause({pauseDuration:F1})";
+            OnBackfillAction?.Invoke(_pauseStartFrameIndex, pauseScript);
+
+            _logger.LogInformation("F1暂停结束，时长: {Duration}s，回写到Frame: {Frame}",
+                pauseDuration, _pauseStartFrameIndex);
+
+            // 记录原始输入
+            var rawRecord = new RawInputRecord
+            {
+                Type = "KeyDown",
+                Key = "F1",
+                Timestamp = timestamp
+            };
+            _rawInputRecords.Enqueue(rawRecord);
+            WriteRawInputRecord(rawRecord);
+
+            // 重置暂停状态
+            _pauseStartTime = 0;
+            _pauseStartFrameIndex = -1;
+        }
+    }
+
+    /// <summary>
     /// 按键按下事件 - 支持回写的重载版本
     /// </summary>
     public void OnKeyDown(object? sender, KeyEventArgs e, int currentFrameIndex)
@@ -228,6 +315,27 @@ public class InputMonitor : IDisposable
         {
             try
             {
+                // F1的KeyUp事件不需要特殊处理，只记录原始输入
+                if (e.KeyCode == Keys.F1)
+                {
+                    var f1RawRecord = new RawInputRecord
+                    {
+                        Type = "KeyUp",
+                        Key = "F1",
+                        Timestamp = timestamp
+                    };
+                    _rawInputRecords.Enqueue(f1RawRecord);
+                    WriteRawInputRecord(f1RawRecord);
+                    return;
+                }
+
+                // 如果正在暂停中，忽略所有其他输入
+                if (_isPaused)
+                {
+                    _logger.LogDebug("暂停中，忽略输入: {Key}", e.KeyCode);
+                    return;
+                }
+
                 // 记录原始输入
                 var rawRecord = new RawInputRecord
                 {
@@ -314,6 +422,13 @@ public class InputMonitor : IDisposable
         {
             try
             {
+                // 如果正在暂停中，忽略鼠标按键
+                if (_isPaused)
+                {
+                    _logger.LogDebug("暂停中，忽略鼠标输入: {Button}", e.Button);
+                    return;
+                }
+
                 // 记录原始输入
                 var rawRecord = new RawInputRecord
                 {
@@ -369,6 +484,13 @@ public class InputMonitor : IDisposable
         {
             try
             {
+                // 如果正在暂停中，忽略鼠标按键
+                if (_isPaused)
+                {
+                    _logger.LogDebug("暂停中，忽略鼠标输入: {Button}", e.Button);
+                    return;
+                }
+
                 // 记录原始输入
                 var rawRecord = new RawInputRecord
                 {
@@ -440,21 +562,39 @@ public class InputMonitor : IDisposable
         {
             try
             {
-                // 累积当前帧的鼠标移动 - 只记录最终位置差
-                _frameMouseDeltaX += state.X;
-                _frameMouseDeltaY += state.Y;
-
-                // 记录原始输入（可选，用于调试）
-                if (Math.Abs(state.X) > 0 || Math.Abs(state.Y) > 0)
+                // 如果正在暂停中，忽略鼠标移动
+                if (_isPaused)
                 {
-                    var rawRecord = new RawInputRecord
+                    return;
+                }
+
+                // 累积鼠标移动 - 200ms频率记录
+                _accumulatedMouseX += state.X;
+                _accumulatedMouseY += state.Y;
+
+                // 检查是否到了记录时间（200ms间隔）
+                if (timestamp - _lastMouseRecordTime >= MouseRecordInterval)
+                {
+                    // 只有移动距离>5像素才记录
+                    if (Math.Abs(_accumulatedMouseX) > 5 || Math.Abs(_accumulatedMouseY) > 5)
                     {
-                        Type = "MouseMoveBy",
-                        Key = $"{state.X},{state.Y}",
-                        Timestamp = timestamp
-                    };
-                    _rawInputRecords.Enqueue(rawRecord);
-                    WriteRawInputRecord(rawRecord);
+                        // 记录原始输入
+                        var rawRecord = new RawInputRecord
+                        {
+                            Type = "MouseMoveBy",
+                            Key = $"{_accumulatedMouseX},{_accumulatedMouseY}",
+                            Timestamp = timestamp
+                        };
+                        _rawInputRecords.Enqueue(rawRecord);
+                        WriteRawInputRecord(rawRecord);
+
+                        _logger.LogDebug("记录鼠标移动: dx={X}, dy={Y}", _accumulatedMouseX, _accumulatedMouseY);
+                    }
+
+                    // 重置累积值和时间
+                    _accumulatedMouseX = 0;
+                    _accumulatedMouseY = 0;
+                    _lastMouseRecordTime = timestamp;
                 }
             }
             catch (Exception ex)
@@ -517,12 +657,18 @@ public class InputMonitor : IDisposable
             _mouseStates.Clear();
 
             // 清理鼠标移动累积
-            _frameMouseDeltaX = 0;
-            _frameMouseDeltaY = 0;
-            _lastMouseResetTime = 0;
+            _accumulatedMouseX = 0;
+            _accumulatedMouseY = 0;
+            _lastMouseRecordTime = 0;
 
             // 清理待回写事件
             _pendingActions.Clear();
+
+            // 清理暂停状态
+            _isPaused = false;
+            _pauseStartTime = 0;
+            _pauseStartFrameIndex = -1;
+            _waitingForSecondF1 = false;
         }
     }
 
@@ -551,11 +697,8 @@ public class InputMonitor : IDisposable
                 }
             }
 
-            // 检查是否有当前帧的鼠标移动，生成moveby脚本
-            if (Math.Abs(_frameMouseDeltaX) > 5 || Math.Abs(_frameMouseDeltaY) > 5)
-            {
-                actions.Add($"moveby({_frameMouseDeltaX},{_frameMouseDeltaY})");
-            }
+            // 鼠标移动现在通过200ms间隔的原始输入记录处理
+            // 不在这里生成moveby脚本，因为已经在OnMouseMoveBy中处理
 
             // 如果没有动作，返回等待指令
             if (actions.Count == 0)
@@ -569,15 +712,76 @@ public class InputMonitor : IDisposable
     }
 
     /// <summary>
-    /// 重置当前帧的鼠标移动累积 - 每帧调用一次
+    /// 获取当前累积的鼠标移动（用于调试）
     /// </summary>
-    public void ResetFrameMouseDelta()
+    public (int X, int Y) GetAccumulatedMouseDelta()
     {
         lock (_lockObject)
         {
-            _frameMouseDeltaX = 0;
-            _frameMouseDeltaY = 0;
-            _lastMouseResetTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            return (_accumulatedMouseX, _accumulatedMouseY);
+        }
+    }
+
+    /// <summary>
+    /// 强制完成所有待回写事件 - 在菜单状态时调用
+    /// </summary>
+    private void ForceCompleteAllPendingActions()
+    {
+        lock (_lockObject)
+        {
+            try
+            {
+                var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var completedActions = new List<Keys>();
+
+                foreach (var kvp in _pendingActions)
+                {
+                    var pendingAction = kvp.Value;
+                    var duration = (currentTime - pendingAction.StartTime) / 1000.0;
+
+                    // 生成动作事件
+                    var actionEvent = new ActionEvent
+                    {
+                        Key = pendingAction.Key,
+                        StartTime = pendingAction.StartTime,
+                        EndTime = currentTime,
+                        Duration = (long)(duration * 1000), // 转换为毫秒
+                        RepeatCount = pendingAction.RepeatCount
+                    };
+
+                    // 生成动作脚本并回写
+                    var actionScript = ConvertActionEventToScript(actionEvent);
+                    if (!string.IsNullOrEmpty(actionScript))
+                    {
+                        OnBackfillAction?.Invoke(pendingAction.StartFrameIndex, actionScript);
+                        _logger.LogInformation("菜单状态强制完成待回写事件: Frame {Frame}, Script: {Script}",
+                            pendingAction.StartFrameIndex, actionScript);
+                    }
+
+                    completedActions.Add(kvp.Key);
+                }
+
+                // 清理已完成的待回写事件
+                foreach (var key in completedActions)
+                {
+                    _pendingActions.Remove(key);
+
+                    // 同时更新按键状态
+                    if (_keyStates.TryGetValue(key, out var keyState))
+                    {
+                        keyState.IsPressed = false;
+                    }
+                }
+
+                if (completedActions.Count > 0)
+                {
+                    _logger.LogInformation("菜单状态强制完成 {Count} 个待回写事件", completedActions.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "强制完成待回写事件时发生异常");
+            }
         }
     }
 
@@ -645,7 +849,7 @@ public class InputMonitor : IDisposable
             Keys.D4 => "sw(4)",
             Keys.F => "f",
             Keys.T => "t",
-            Keys.F1 => durationSeconds > 0.1 ? $"pause({durationSeconds:F1})" : "pause(0.1)",
+            // F1暂停由特殊逻辑处理，不在这里生成脚本
             _ => string.Empty
         };
     }

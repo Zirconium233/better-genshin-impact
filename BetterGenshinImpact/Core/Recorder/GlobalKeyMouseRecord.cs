@@ -41,6 +41,9 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
     // 当前帧索引 - 用于回写逻辑
     public int CurrentFrameIndex { get; set; } = -1;
 
+    // 数据收集模式 - 在此模式下不受_isInMainUi限制
+    public bool IsDataCollectionMode { get; set; } = false;
+
     public GlobalKeyMouseRecord()
     {
         _timer.Elapsed += Tick;
@@ -209,15 +212,22 @@ public class GlobalKeyMouseRecord : Singleton<GlobalKeyMouseRecord>
 
     public void GlobalHookMouseMoveBy(MouseState state, uint time)
     {
-        if (state is { X: 0, Y: 0 } || !_isInMainUi)
+        if (state is { X: 0, Y: 0 })
         {
             return;
         }
-        // Debug.WriteLine($"MouseMoveBy: {state.X}, {state.Y}");
-        _recorder?.MouseMoveBy(state, time);
 
-        // 通知InputMonitor
-        InputMonitorMouseMoveBy?.Invoke(this, state, time);
+        // 在数据收集模式下，不受_isInMainUi限制
+        bool shouldRecord = IsDataCollectionMode || _isInMainUi;
+
+        if (shouldRecord)
+        {
+            // Debug.WriteLine($"MouseMoveBy: {state.X}, {state.Y}");
+            _recorder?.MouseMoveBy(state, time);
+
+            // 通知InputMonitor
+            InputMonitorMouseMoveBy?.Invoke(this, state, time);
+        }
     }
 }
 

@@ -107,37 +107,31 @@ public class StructuredState
 }
 
 /// <summary>
-/// 游戏上下文
+/// 游戏上下文 - 简化版，只保留核心状态
 /// </summary>
 public class GameContext
 {
     /// <summary>
-    /// 游戏阶段
-    /// </summary>
-    [JsonProperty("game_phase")]
-    public string GamePhase { get; set; } = "unknown";
-
-    /// <summary>
-    /// 是否在战斗中
-    /// </summary>
-    [JsonProperty("in_combat")]
-    public bool InCombat { get; set; } = false;
-
-    /// <summary>
-    /// 是否在菜单中
+    /// 是否在菜单中 - 通过队伍检测判断
     /// </summary>
     [JsonProperty("in_menu")]
     public bool InMenu { get; set; } = false;
 
     /// <summary>
-    /// 是否在加载中
+    /// 是否在战斗中 - 复用AutoFight检测逻辑
     /// </summary>
-    [JsonProperty("loading")]
-    public bool Loading { get; set; } = false;
+    [JsonProperty("in_combat")]
+    public bool InCombat { get; set; } = false;
+
+    /// <summary>
+    /// 是否在秘境中 - 复用AutoDomain检测逻辑
+    /// </summary>
+    [JsonProperty("in_domain")]
+    public bool InDomain { get; set; } = false;
 }
 
 /// <summary>
-/// 角色状态
+/// 角色状态 - 简化版，只保留核心信息
 /// </summary>
 public class CharacterState
 {
@@ -148,28 +142,10 @@ public class CharacterState
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// 血量百分比
+    /// 是否为当前角色且血量较低 - 复用BGI的CurrentAvatarIsLowHp检测
     /// </summary>
-    [JsonProperty("hp_percent")]
-    public float HpPercent { get; set; } = 1.0f;
-
-    /// <summary>
-    /// 能量百分比
-    /// </summary>
-    [JsonProperty("energy_percent")]
-    public float EnergyPercent { get; set; } = 0.0f;
-
-    /// <summary>
-    /// 元素技能冷却时间 (秒)
-    /// </summary>
-    [JsonProperty("skill_cooldown")]
-    public float SkillCooldown { get; set; } = 0.0f;
-
-    /// <summary>
-    /// 元素爆发是否可用
-    /// </summary>
-    [JsonProperty("burst_available")]
-    public bool BurstAvailable { get; set; } = false;
+    [JsonProperty("is_current_low_hp")]
+    public bool IsCurrentLowHp { get; set; } = false;
 }
 
 
