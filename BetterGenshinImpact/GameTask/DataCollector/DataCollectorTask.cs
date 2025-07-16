@@ -55,11 +55,14 @@ public class DataCollectorTask : ISoloTask
     private CancellationTokenSource? _internalCts;
     private Timer? _collectionTimer;
     private Timer? _triggerCheckTimer;
+    private CancellationTokenSource? _collectionCts;
+    private Task? _collectionTask;
     private int _frameIndex = 0;
     private long _sessionStartTime;
     private string _sessionPath = string.Empty;
     private string _framesPath = string.Empty;
     private long _lastNoActionFrameTime = 0;
+    private long _lastFrameTimestamp = 0;
     private DataCollectorState _currentState = DataCollectorState.Stopped;
     private readonly object _stateLock = new();
     private volatile bool _stopRequested = false;
@@ -117,6 +120,30 @@ public class DataCollectorTask : ISoloTask
         {
             _logger.LogWarning(e, "启动DirectInputMonitor时发生异常，鼠标移动可能无法正常记录");
         }
+    }
+
+    /// <summary>
+    /// 计算实际的等待时间，基于上一帧的时间差
+    /// </summary>
+    /// <param name="currentTimestamp">当前帧时间戳</param>
+    /// <param name="expectedInterval">期望的帧间隔(毫秒)</param>
+    /// <returns>实际等待时间(秒)</returns>
+    private double CalculateActualWaitTime(long currentTimestamp, int expectedInterval)
+    {
+        if (_lastFrameTimestamp == 0)
+        {
+            // 第一帧，使用期望间隔
+            _lastFrameTimestamp = currentTimestamp;
+            return expectedInterval / 1000.0;
+        }
+
+        // 计算实际时间差
+        var actualInterval = currentTimestamp - _lastFrameTimestamp;
+        _lastFrameTimestamp = currentTimestamp;
+
+        // 使用实际时间差，但限制在合理范围内
+        var actualWaitTime = Math.Max(0.1, Math.Min(2.0, actualInterval / 1000.0));
+        return actualWaitTime;
     }
 
     /// <summary>
@@ -439,7 +466,7 @@ public class DataCollectorTask : ISoloTask
                 if (targetRecord != null && targetRecord.CanBeBackfilled)
                 {
                     // 合并动作脚本
-                    if (string.IsNullOrEmpty(targetRecord.ActionScript) || targetRecord.ActionScript == "wait(0.2)")
+                    if (string.IsNullOrEmpty(targetRecord.ActionScript) || targetRecord.ActionScript.StartsWith("wait"))
                     {
                         targetRecord.ActionScript = actionScript;
                     }
@@ -448,6 +475,9 @@ public class DataCollectorTask : ISoloTask
                         // 使用&连接同步动作
                         targetRecord.ActionScript = $"{targetRecord.ActionScript}&{actionScript}";
                     }
+
+                    // 回写后标记为不可再次回写，防止重复
+                    targetRecord.CanBeBackfilled = false;
 
                     _logger.LogDebug("成功回写动作脚本到Frame {Frame}: {Script}", frameIndex, actionScript);
                 }
@@ -636,6 +666,7 @@ public class DataCollectorTask : ISoloTask
     private async Task InitializeSession()
     {
         _sessionStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        _lastFrameTimestamp = 0; // 重置帧时间戳
         
         // 创建会话目录
         _sessionPath = Path.Combine(Path.GetFullPath(_taskParam.DatasetPath), _taskParam.SessionId);
@@ -756,15 +787,68 @@ public class DataCollectorTask : ISoloTask
     }
 
     /// <summary>
-    /// 开始数据采集
+    /// 开始数据采集 - 使用高精度Task-based定时器
     /// </summary>
     private void StartDataCollection()
     {
         var collectionInterval = 1000 / _taskParam.CollectionFps; // 毫秒
 
-        _collectionTimer = new Timer(CollectFrame, null, 0, collectionInterval);
+        _collectionCts = new CancellationTokenSource();
+        _collectionTask = Task.Run(async () => await CollectionLoop(collectionInterval, _collectionCts.Token));
+
         _logger.LogInformation("数据采集已启动, FPS: {Fps}, 间隔: {Interval}ms",
             _taskParam.CollectionFps, collectionInterval);
+    }
+
+    /// <summary>
+    /// 高精度采集循环 - 使用Stopwatch确保时间精度
+    /// </summary>
+    private async Task CollectionLoop(int intervalMs, CancellationToken cancellationToken)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var nextFrameTime = 0L;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                // 检查是否正在采集
+                lock (_stateLock)
+                {
+                    if (_currentState != DataCollectorState.Collecting || _ct.IsCancellationRequested || _stopRequested)
+                        return;
+                }
+
+                // 采集帧数据
+                CollectFrame();
+
+                // 计算下一帧时间
+                nextFrameTime += intervalMs;
+                var currentTime = stopwatch.ElapsedMilliseconds;
+                var waitTime = nextFrameTime - currentTime;
+
+                if (waitTime > 0)
+                {
+                    // 使用高精度延迟
+                    await Task.Delay((int)waitTime, cancellationToken);
+                }
+                else if (waitTime < -intervalMs)
+                {
+                    // 如果延迟超过一个帧间隔，重置时间基准
+                    _logger.LogWarning("帧采集延迟过大: {Delay}ms, 重置时间基准", -waitTime);
+                    nextFrameTime = stopwatch.ElapsedMilliseconds;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning(e, "采集循环中发生异常");
+                await Task.Delay(intervalMs, cancellationToken);
+            }
+        }
     }
 
     /// <summary>
@@ -772,6 +856,14 @@ public class DataCollectorTask : ISoloTask
     /// </summary>
     private void StopDataCollection()
     {
+        // 停止Task-based定时器
+        _collectionCts?.Cancel();
+        _collectionTask?.Wait(1000); // 等待最多1秒
+        _collectionCts?.Dispose();
+        _collectionCts = null;
+        _collectionTask = null;
+
+        // 保留Timer作为备用
         _collectionTimer?.Dispose();
         _collectionTimer = null;
         _logger.LogInformation("数据采集已停止");
@@ -885,7 +977,7 @@ private bool CheckDomainStart()
     /// <summary>
     /// 采集单帧数据
     /// </summary>
-    private void CollectFrame(object? state)
+    private void CollectFrame()
     {
         // 检查是否正在采集
         lock (_stateLock)
@@ -894,7 +986,8 @@ private bool CheckDomainStart()
                 return;
         }
 
-        var frameStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // 1. 立即记录截图时间戳
+        var screenshotTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         try
         {
@@ -904,14 +997,14 @@ private bool CheckDomainStart()
             // 定期清理超时的待回写事件（每100帧清理一次）
             if (_frameIndex % 100 == 0)
             {
-                _inputMonitor.CleanupTimeoutPendingActions(frameStartTime);
+                _inputMonitor.CleanupTimeoutPendingActions(screenshotTimestamp);
             }
 
+            // 2. 立即截图
             using var imageRegion = TaskControl.CaptureToRectArea();
 
-            // 生成脚本格式的动作 - 基于action_report.md的设计
+            // 3. 生成脚本格式的动作 - 基于action_report.md的设计
             var actionScript = string.Empty;
-            var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             try
             {
@@ -921,7 +1014,9 @@ private bool CheckDomainStart()
                 // 验证生成的脚本
                 if (!_stateExtractor.ValidateActionScript(actionScript))
                 {
-                    actionScript = $"wait({frameInterval / 1000.0:F1})";
+                    // 计算实际的等待时间，基于上一帧的时间差
+                    var actualWaitTime = CalculateActualWaitTime(screenshotTimestamp, frameInterval);
+                    actionScript = $"wait({actualWaitTime:F1})";
                 }
 
                 // 记录非等待动作的脚本
@@ -933,18 +1028,20 @@ private bool CheckDomainStart()
             catch (Exception e)
             {
                 _logger.LogDebug(e, "生成动作脚本失败");
-                actionScript = $"wait({1000 / _taskParam.CollectionFps / 1000.0:F1})";
+                // 计算实际的等待时间，基于上一帧的时间差
+                var actualWaitTime = CalculateActualWaitTime(screenshotTimestamp, 1000 / _taskParam.CollectionFps);
+                actionScript = $"wait({actualWaitTime:F1})";
             }
 
             // 检查是否需要采集无动作帧
             if (actionScript.StartsWith("wait") && !_taskParam.CollectNoActionFrames)
             {
                 // 检查是否需要采集无动作帧
-                if (currentTime - _lastNoActionFrameTime < _taskParam.NoActionFrameInterval)
+                if (screenshotTimestamp - _lastNoActionFrameTime < _taskParam.NoActionFrameInterval)
                 {
                     return; // 跳过此帧
                 }
-                _lastNoActionFrameTime = currentTime;
+                _lastNoActionFrameTime = screenshotTimestamp;
             }
 
             // 提取结构化状态（可选，根据配置决定）
@@ -986,10 +1083,11 @@ private bool CheckDomainStart()
             {
                 SessionId = _taskParam.SessionId,
                 FrameIndex = _frameIndex++,
-                TimeOffsetMs = currentTime - _sessionStartTime,
+                TimeOffsetMs = screenshotTimestamp - _sessionStartTime,
                 FramePath = framePath,
                 ActionScript = actionScript, // 脚本格式的动作
-                StructuredState = structuredState ?? new StructuredState()
+                StructuredState = structuredState ?? new StructuredState(),
+                CanBeBackfilled = actionScript.StartsWith("wait") // 只有wait动作可以被回写
             };
 
             // 添加到缓冲区
@@ -1098,9 +1196,15 @@ private bool CheckDomainStart()
 
         try
         {
-            // 停止所有定时器
+            // 停止所有定时器和任务
             try
             {
+                _collectionCts?.Cancel();
+                _collectionTask?.Wait(1000);
+                _collectionCts?.Dispose();
+                _collectionCts = null;
+                _collectionTask = null;
+
                 _collectionTimer?.Dispose();
                 _collectionTimer = null;
             }

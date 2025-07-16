@@ -46,6 +46,9 @@ public class StateExtractor
     private long _lastGameContextUpdateTime = 0;
     private long _gameContextCacheIntervalMs = 1000; // 1秒缓存间隔，可配置
 
+    // 角色队伍缓存
+    private long _lastCombatScenesUpdateTime = 0;
+
     // 配置选项
     private bool _enableCombatDetection = false;
     private bool _enableDomainDetection = false;
@@ -81,20 +84,35 @@ public class StateExtractor
             enableCombatDetection, enableDomainDetection, cacheIntervalMs);
     }
 
+
+
     /// <summary>
-    /// 初始化战斗场景 - 复用BGI的CombatScenes
+    /// 初始化战斗场景 - 复用BGI的CombatScenes，带缓存机制
     /// </summary>
     public void InitializeCombatScenes(ImageRegion imageRegion)
     {
+        var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        // 检查缓存是否有效
+        if (_combatScenes != null &&
+            _combatScenes.CheckTeamInitialized() &&
+            (currentTime - _lastCombatScenesUpdateTime) < _gameContextCacheIntervalMs)
+        {
+            // 缓存有效，直接返回
+            return;
+        }
+
         try
         {
             _combatScenes = new CombatScenes().InitializeTeam(imageRegion);
+            _lastCombatScenesUpdateTime = currentTime;
             _logger.LogDebug("战斗场景初始化完成");
         }
         catch (Exception e)
         {
             _logger.LogWarning(e, "战斗场景初始化失败");
             _combatScenes = null;
+            _lastCombatScenesUpdateTime = currentTime; // 即使失败也更新时间，避免频繁重试
         }
     }
 
@@ -107,15 +125,18 @@ public class StateExtractor
 
         try
         {
-            // 1. 始终提取队伍信息和角色索引（这两个很快）
+            // 1. 快速菜单检测 - 一行Bv调用，最可靠
+            var inMenu = Bv.IsInAnyClosableUi(imageRegion);
+
+            // 2. 提取队伍信息和角色索引（带缓存）
             state.PlayerTeam = ExtractPlayerTeam(imageRegion);
             state.ActiveCharacterIndex = GetActiveCharacterIndex(imageRegion);
 
-            // 2. 基于队伍信息快速判断菜单状态
-            var inMenu = state.PlayerTeam.Count != 4;
+            // 3. 检测当前角色低血量状态（只检测当前角色）
+            var isCurrentLowHp = GetCurrentCharacterLowHp(imageRegion);
 
-            // 3. 高效提取游戏上下文（使用缓存机制）
-            state.GameContext = ExtractGameContextOptimized(imageRegion, inMenu);
+            // 4. 高效提取游戏上下文（使用缓存机制）
+            state.GameContext = ExtractGameContextOptimized(imageRegion, inMenu, isCurrentLowHp);
         }
         catch (Exception e)
         {
@@ -125,6 +146,22 @@ public class StateExtractor
         }
 
         return state;
+    }
+
+    /// <summary>
+    /// 检测当前角色低血量状态 - 只检测当前角色，节约性能
+    /// </summary>
+    private bool GetCurrentCharacterLowHp(ImageRegion imageRegion)
+    {
+        try
+        {
+            return Bv.CurrentAvatarIsLowHp(imageRegion);
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "当前角色血量检测失败");
+            return false;
+        }
     }
 
     /// <summary>
@@ -151,7 +188,7 @@ public class StateExtractor
     /// <summary>
     /// 优化的游戏上下文提取 - 使用缓存机制提升性能
     /// </summary>
-    private GameContext ExtractGameContextOptimized(ImageRegion imageRegion, bool inMenu)
+    private GameContext ExtractGameContextOptimized(ImageRegion imageRegion, bool inMenu, bool isCurrentLowHp)
     {
         var currentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -162,7 +199,8 @@ public class StateExtractor
             {
                 InMenu = true,
                 InCombat = _lastInCombat,
-                InDomain = _lastInDomain
+                InDomain = _lastInDomain,
+                IsCurrentLowHp = isCurrentLowHp
             };
         }
 
@@ -170,8 +208,15 @@ public class StateExtractor
         if (_cachedGameContext != null &&
             (currentTime - _lastGameContextUpdateTime) < _gameContextCacheIntervalMs)
         {
-            // 缓存有效，直接返回
-            return _cachedGameContext;
+            // 缓存有效，但更新当前角色血量状态（这个检测很快）
+            var cachedContext = new GameContext
+            {
+                InMenu = _cachedGameContext.InMenu,
+                InCombat = _cachedGameContext.InCombat,
+                InDomain = _cachedGameContext.InDomain,
+                IsCurrentLowHp = isCurrentLowHp
+            };
+            return cachedContext;
         }
 
         // 缓存过期或无效，重新检测
@@ -179,7 +224,8 @@ public class StateExtractor
         {
             InMenu = false,
             InCombat = _enableCombatDetection && DetectInCombat(imageRegion),
-            InDomain = _enableDomainDetection && DetectInDomain(imageRegion)
+            InDomain = _enableDomainDetection && DetectInDomain(imageRegion),
+            IsCurrentLowHp = isCurrentLowHp
         };
 
         // 更新缓存状态
@@ -281,8 +327,7 @@ public class StateExtractor
                 {
                     var characterState = new CharacterState
                     {
-                        Name = avatar.Name,
-                        IsCurrentLowHp = GetIsCurrentLowHp(avatar, imageRegion)
+                        Name = avatar.Name
                     };
                     team.Add(characterState);
                 }
@@ -323,21 +368,7 @@ public class StateExtractor
         return 0;
     }
 
-    /// <summary>
-    /// 获取当前角色是否血量较低 - 复用BGI的CurrentAvatarIsLowHp检测
-    /// </summary>
-    private static bool GetIsCurrentLowHp(Avatar _, ImageRegion imageRegion)
-    {
-        try
-        {
-            // 复用BGI的血量检测逻辑
-            return Bv.CurrentAvatarIsLowHp(imageRegion);
-        }
-        catch
-        {
-            return false; // 检测失败时默认不是低血量
-        }
-    }
+
 
 
 

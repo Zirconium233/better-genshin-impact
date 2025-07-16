@@ -112,7 +112,7 @@ public class StructuredState
 public class GameContext
 {
     /// <summary>
-    /// 是否在菜单中 - 通过队伍检测判断
+    /// 是否在菜单中 - 通过UI检测判断
     /// </summary>
     [JsonProperty("in_menu")]
     public bool InMenu { get; set; } = false;
@@ -128,6 +128,12 @@ public class GameContext
     /// </summary>
     [JsonProperty("in_domain")]
     public bool InDomain { get; set; } = false;
+
+    /// <summary>
+    /// 当前角色是否血量较低 - 只检测当前角色，节约性能
+    /// </summary>
+    [JsonProperty("is_current_low_hp")]
+    public bool IsCurrentLowHp { get; set; } = false;
 }
 
 /// <summary>
@@ -140,12 +146,6 @@ public class CharacterState
     /// </summary>
     [JsonProperty("name")]
     public string Name { get; set; } = string.Empty;
-
-    /// <summary>
-    /// 是否为当前角色且血量较低 - 复用BGI的CurrentAvatarIsLowHp检测
-    /// </summary>
-    [JsonProperty("is_current_low_hp")]
-    public bool IsCurrentLowHp { get; set; } = false;
 }
 
 

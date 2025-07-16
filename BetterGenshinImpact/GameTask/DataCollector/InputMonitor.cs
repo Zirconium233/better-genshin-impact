@@ -18,7 +18,7 @@ namespace BetterGenshinImpact.GameTask.DataCollector;
 /// <summary>
 /// 输入监控器 - 重构版，专注于原始输入记录和脚本生成
 /// </summary>
-public class InputMonitor : IDisposable
+public partial class InputMonitor : IDisposable
 {
     private readonly ILogger<InputMonitor> _logger = App.GetLogger<InputMonitor>();
     private readonly object _lockObject = new();
@@ -40,6 +40,11 @@ public class InputMonitor : IDisposable
 
     // 脚本生成缓存
     private readonly Queue<ActionEvent> _actionEvents = new();
+    private readonly Queue<MouseMoveActionEvent> _mouseActionEvents = new();
+
+    // 事件去重机制
+    private readonly HashSet<string> _processedEventIds = new();
+    private readonly object _eventIdLock = new();
 
     // 待回写的动作事件 - 用于支持按键按下帧回写
     private readonly Dictionary<Keys, PendingActionEvent> _pendingActions = new();
@@ -120,8 +125,15 @@ public class InputMonitor : IDisposable
         {
             _keyStates.Clear();
             _mouseStates.Clear();
-            while (_actionEvents.TryDequeue(out _)) { }
+            _actionEvents.Clear();
+            _mouseActionEvents.Clear();
             while (_rawInputRecords.TryDequeue(out _)) { }
+        }
+
+        // 清理事件去重缓存
+        lock (_eventIdLock)
+        {
+            _processedEventIds.Clear();
         }
 
         // 关闭原始输入文件
@@ -558,8 +570,7 @@ public class InputMonitor : IDisposable
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        // 添加调试日志，检查是否收到鼠标移动事件
-        _logger.LogDebug("收到鼠标移动事件: X={X}, Y={Y}, 时间={Time}", state.X, state.Y, timestamp);
+
 
         lock (_lockObject)
         {
@@ -591,7 +602,24 @@ public class InputMonitor : IDisposable
                         _rawInputRecords.Enqueue(rawRecord);
                         WriteRawInputRecord(rawRecord);
 
-                        _logger.LogInformation("记录鼠标移动: dx={X}, dy={Y}", _accumulatedMouseX, _accumulatedMouseY);
+                        // 生成鼠标移动动作事件用于脚本生成
+                        var mouseActionEvent = new MouseMoveActionEvent
+                        {
+                            DeltaX = _accumulatedMouseX,
+                            DeltaY = _accumulatedMouseY,
+                            StartTime = timestamp,
+                            EndTime = timestamp,
+                            Duration = 0 // 鼠标移动是瞬时的
+                        };
+                        _mouseActionEvents.Enqueue(mouseActionEvent);
+
+                        // 保持队列大小
+                        while (_mouseActionEvents.Count > 100)
+                        {
+                            _mouseActionEvents.Dequeue();
+                        }
+
+
                     }
 
                     // 重置累积值和时间
@@ -693,6 +721,13 @@ public class InputMonitor : IDisposable
 
             foreach (var evt in recentEvents)
             {
+                // 生成事件ID进行去重检查
+                var eventId = GenerateEventId("action", evt.Key.ToString(), evt.StartTime, evt.Duration);
+                if (IsEventProcessed(eventId))
+                {
+                    continue; // 跳过已处理的事件
+                }
+
                 var actionScript = ConvertActionEventToScript(evt);
                 if (!string.IsNullOrEmpty(actionScript))
                 {
@@ -700,8 +735,36 @@ public class InputMonitor : IDisposable
                 }
             }
 
-            // 鼠标移动现在通过200ms间隔的原始输入记录处理
-            // 不在这里生成moveby脚本，因为已经在OnMouseMoveBy中处理
+            // 获取时间窗口内的鼠标移动事件
+            var recentMouseEvents = _mouseActionEvents
+                .Where(e => currentTime - e.EndTime <= timeWindowMs)
+                .OrderBy(e => e.StartTime)
+                .ToList();
+
+            // 合并鼠标移动事件（去重处理）
+            if (recentMouseEvents.Count > 0)
+            {
+                var uniqueMouseEvents = new List<MouseMoveActionEvent>();
+                foreach (var mouseEvt in recentMouseEvents)
+                {
+                    var mouseEventId = GenerateEventId("mouse", $"{mouseEvt.DeltaX},{mouseEvt.DeltaY}", mouseEvt.StartTime, 0);
+                    if (!IsEventProcessed(mouseEventId))
+                    {
+                        uniqueMouseEvents.Add(mouseEvt);
+                    }
+                }
+
+                if (uniqueMouseEvents.Count > 0)
+                {
+                    var totalDeltaX = uniqueMouseEvents.Sum(e => e.DeltaX);
+                    var totalDeltaY = uniqueMouseEvents.Sum(e => e.DeltaY);
+
+                    if (Math.Abs(totalDeltaX) > 0 || Math.Abs(totalDeltaY) > 0)
+                    {
+                        actions.Add($"moveby({totalDeltaX},{totalDeltaY})");
+                    }
+                }
+            }
 
             // 如果没有动作，返回等待指令
             if (actions.Count == 0)
@@ -917,4 +980,66 @@ internal class ActionEvent
     public long StartTime { get; set; }
     public long EndTime { get; set; }
     public int RepeatCount { get; set; } // 异常重复次数
+}
+
+/// <summary>
+/// 鼠标移动动作事件 - 用于生成moveby脚本
+/// </summary>
+internal class MouseMoveActionEvent
+{
+    public int DeltaX { get; set; } // X轴移动距离
+    public int DeltaY { get; set; } // Y轴移动距离
+    public long StartTime { get; set; }
+    public long EndTime { get; set; }
+    public long Duration { get; set; } // 持续时间(毫秒)
+}
+
+/// <summary>
+/// InputMonitor的事件去重扩展方法
+/// </summary>
+public partial class InputMonitor
+{
+    /// <summary>
+    /// 生成事件唯一ID
+    /// </summary>
+    /// <param name="eventType">事件类型</param>
+    /// <param name="key">按键或鼠标按钮</param>
+    /// <param name="timestamp">时间戳</param>
+    /// <param name="duration">持续时间</param>
+    /// <returns>事件ID</returns>
+    private string GenerateEventId(string eventType, string key, long timestamp, long duration)
+    {
+        return $"{eventType}_{key}_{timestamp}_{duration}";
+    }
+
+    /// <summary>
+    /// 检查事件是否已处理（去重）
+    /// </summary>
+    /// <param name="eventId">事件ID</param>
+    /// <returns>true表示已处理，false表示未处理</returns>
+    private bool IsEventProcessed(string eventId)
+    {
+        lock (_eventIdLock)
+        {
+            if (_processedEventIds.Contains(eventId))
+            {
+                return true;
+            }
+
+            _processedEventIds.Add(eventId);
+
+            // 限制缓存大小，避免内存泄漏
+            if (_processedEventIds.Count > 10000)
+            {
+                // 清理一半的旧事件ID
+                var toRemove = _processedEventIds.Take(5000).ToList();
+                foreach (var id in toRemove)
+                {
+                    _processedEventIds.Remove(id);
+                }
+            }
+
+            return false;
+        }
+    }
 }
