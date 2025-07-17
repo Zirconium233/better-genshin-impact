@@ -709,47 +709,59 @@ public class DataCollectorTask : ISoloTask
 
         try
         {
+            DataCollectorState currentState;
+            bool shouldTriggerStart = false;
+            bool shouldTriggerStop = false;
+
+            // 在锁中检查状态和触发条件
             lock (_stateLock)
             {
-                if (_currentState == DataCollectorState.WaitingTrigger)
+                currentState = _currentState;
+
+                if (currentState == DataCollectorState.WaitingTrigger)
                 {
                     if (CheckStartTrigger())
                     {
-                        // 在锁外启动异步任务
-                        GenerateNewSessionId();
-
-                        // 释放锁后再异步初始化会话
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await InitializeSession();
-
-                                // 重新获取锁来设置状态和启动采集
-                                lock (_stateLock)
-                                {
-                                    if (!_ct.IsCancellationRequested && !_stopRequested)
-                                    {
-                                        SetState(DataCollectorState.Collecting);
-                                        StartDataCollection();
-                                    }
-                                }
-                            }
-                            catch (Exception e)
-                            {
-                                _logger.LogError(e, "触发器启动采集时发生异常");
-                            }
-                        });
+                        shouldTriggerStart = true;
+                        _logger.LogInformation("触发器检测到开始条件，准备启动数据采集");
                     }
                 }
-                else if (_currentState == DataCollectorState.Collecting)
+                else if (currentState == DataCollectorState.Collecting)
                 {
                     if (CheckEndTrigger())
                     {
-                        StopDataCollection();
-                        SetState(DataCollectorState.WaitingTrigger);
+                        shouldTriggerStop = true;
+                        _logger.LogInformation("触发器检测到结束条件，准备停止数据采集");
                     }
                 }
+            }
+
+            // 在锁外调用RequestStop方法，复用完整的按钮逻辑
+            if (shouldTriggerStart || shouldTriggerStop)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        // 调用RequestStop方法，这会处理所有的UI更新、数据保存等逻辑
+                        // 对于WaitingTrigger状态，RequestStop会启动采集
+                        // 对于Collecting状态，RequestStop会停止采集并保存数据
+                        await RequestStop();
+
+                        if (shouldTriggerStart)
+                        {
+                            _logger.LogInformation("触发器成功启动数据采集");
+                        }
+                        else if (shouldTriggerStop)
+                        {
+                            _logger.LogInformation("触发器成功停止数据采集");
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        _logger.LogError(e, "触发器调用RequestStop时发生异常");
+                    }
+                });
             }
         }
         catch (Exception e)
