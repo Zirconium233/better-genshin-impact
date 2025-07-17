@@ -689,6 +689,14 @@ public class Avatar
     }
 
     /// <summary>
+    /// 交互/拾取 F键
+    /// </summary>
+    public void Interact()
+    {
+        Simulation.SendInput.SimulateAction(GIActions.PickUpOrInteract);
+    }
+
+    /// <summary>
     /// 重击
     /// </summary>
     public void Charge(int ms = 0)

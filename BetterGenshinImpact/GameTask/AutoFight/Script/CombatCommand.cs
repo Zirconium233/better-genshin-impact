@@ -204,6 +204,10 @@ public class CombatCommand
         {
             avatar.Jump();
         }
+        else if (Method == Method.Interact)
+        {
+            avatar.Interact();
+        }
         // 宏
         else if (Method == Method.MouseDown)
         {

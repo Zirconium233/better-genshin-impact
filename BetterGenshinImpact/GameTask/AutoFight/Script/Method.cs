@@ -22,6 +22,7 @@ public class Method
     public static readonly Method Aim = new(["aim", "r", "瞄准"]);
     public static readonly Method Dash = new(["dash", "冲刺"]);
     public static readonly Method Jump = new(["jump", "j", "跳跃"]);
+    public static readonly Method Interact = new(["f", "interact", "交互"]);
 
     // 宏
     public static readonly Method MouseDown = new(["mousedown"]);
@@ -51,6 +52,7 @@ public class Method
             // yield return Aim;
             yield return Dash;
             yield return Jump;
+            yield return Interact;
 
             // 宏
             yield return MouseDown;

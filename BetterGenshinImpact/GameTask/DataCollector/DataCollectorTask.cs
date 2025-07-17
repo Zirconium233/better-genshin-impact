@@ -6,6 +6,7 @@ using BetterGenshinImpact.Core.Recognition.OpenCv;
 using BetterGenshinImpact.Core.Recorder;
 using BetterGenshinImpact.Core.Simulator;
 using BetterGenshinImpact.GameTask.Common;
+using BetterGenshinImpact.GameTask.Common.BgiVision;
 using BetterGenshinImpact.GameTask.DataCollector.Model;
 using BetterGenshinImpact.Helpers;
 using Microsoft.Extensions.Logging;
@@ -19,7 +20,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using static Vanara.PInvoke.User32;
+using Vanara.PInvoke;
 
 namespace BetterGenshinImpact.GameTask.DataCollector;
 
@@ -80,7 +81,8 @@ public class DataCollectorTask : ISoloTask
         _stateExtractor.ConfigureDetection(
             _taskParam.EnableCombatDetection,
             _taskParam.EnableDomainDetection,
-            _taskParam.GameContextCacheIntervalMs);
+            _taskParam.GameContextCacheIntervalMs,
+            _taskParam.DebugMode);
 
         // 启用数据收集模式，确保鼠标移动事件不被过滤
         GlobalKeyMouseRecord.Instance.IsDataCollectionMode = true;
@@ -875,40 +877,46 @@ public class DataCollectorTask : ISoloTask
     /// </summary>
 private bool CheckDomainStart()
 {
+        // 不确定这套逻辑是否有效
+        // 之前发送按钮，检测到启动然后F是会自动按下，可以确定应该是匹配到了
+        // 但是没有log，采集也没开始，这是触发器触发了还是没触发
+        // 很奇怪的bug
+    
     try
-    {
-        using var imageRegion = TaskControl.CaptureToRectArea();
-
-        // 根据图片估计"启动"文本位置，设计更精确的检测区域
-        var searchX = imageRegion.Width * 0.5; // 从屏幕中间开始
-        var searchY = imageRegion.Height * 0.55; // 从屏幕中下部开始
-        var searchWidth = imageRegion.Width * 0.2; // 范围覆盖到右侧，稍微扩大以应对不同分辨率
-        var searchHeight = imageRegion.Height * 0.1; // 范围覆盖到下方
-
-        // 确保搜索区域不超出屏幕范围
-        searchX = Math.Max(0, searchX);
-        searchY = Math.Max(0, searchY);
-        searchWidth = Math.Min(imageRegion.Width - searchX, searchWidth);
-        searchHeight = Math.Min(imageRegion.Height - searchY, searchHeight);
-
-        var ocrList = imageRegion.FindMulti(RecognitionObject.Ocr(
-            (int)searchX, (int)searchY, (int)searchWidth, (int)searchHeight));
-        var startChallengeFound = ocrList.Any(ocr => ocr.Text.Contains("启动"));
-
-        if (startChallengeFound)
         {
-            _logger.LogInformation("检测到启动按钮");
-            // 数据采集器不应该发送按键，只做检测
-            return true;
-        }
+            using var imageRegion = TaskControl.CaptureToRectArea();
 
-        return false;
-    }
-    catch (Exception e)
-    {
-        _logger.LogDebug(e, "秘境开始检测失败");
-        return false;
-    }
+            // 根据图片估计"启动"文本位置，设计更精确的检测区域
+            var searchX = imageRegion.Width * 0.5; // 从屏幕中间开始
+            var searchY = imageRegion.Height * 0.3; // 从屏幕中下部开始
+            var searchWidth = imageRegion.Width * 0.3; // 范围覆盖到右侧，稍微扩大以应对不同分辨率
+            var searchHeight = imageRegion.Height * 0.4; // 范围覆盖到下方
+            // 位置不确定
+
+            // 确保搜索区域不超出屏幕范围
+            searchX = Math.Max(0, searchX);
+            searchY = Math.Max(0, searchY);
+            searchWidth = Math.Min(imageRegion.Width - searchX, searchWidth);
+            searchHeight = Math.Min(imageRegion.Height - searchY, searchHeight);
+
+            var ocrList = imageRegion.FindMulti(RecognitionObject.Ocr(
+                (int)searchX, (int)searchY, (int)searchWidth, (int)searchHeight));
+            var startChallengeFound = ocrList.Any(ocr => ocr.Text.Contains("启动"));
+
+            if (startChallengeFound)
+            {
+                _logger.LogInformation("检测到启动按钮");
+                Simulation.SendInput.Keyboard.KeyPress(User32.VK.VK_F); //发送按键F 
+                return true;
+            }
+
+            return false;
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "秘境开始检测失败");
+            return false;
+        }
 }
 
     /// <summary>
@@ -919,7 +927,7 @@ private bool CheckDomainStart()
         try
         {
             using var imageRegion = TaskControl.CaptureToRectArea();
-            // 使用轻量级的战斗检测，避免完整状态提取
+            // 直接复用就行
             return _stateExtractor.IsInCombat(imageRegion);
         }
         catch
@@ -947,8 +955,13 @@ private bool CheckDomainStart()
             var endTipsRect = imageRegion.DeriveCrop(new Rect(0, 0, imageRegion.Width, (int)(imageRegion.Height * 0.3)));
             var endTipsText = OcrFactory.Paddle.Ocr(endTipsRect.SrcMat);
             var hasChallengeComplete = endTipsText.Contains("挑战达成") || endTipsText.Contains("挑战完成");
-
-            return hasTreeReward || hasChallengeComplete;
+            var isDead = Bv.IsInRevivePrompt(imageRegion);
+            if (_taskParam.DebugMode)
+            {
+                _logger.LogDebug("结束触发器：树：{TreeReward},挑战成功字样：{ChallengeComplete},死亡界面：{IsDead}",
+                    hasTreeReward, hasChallengeComplete, isDead);
+            }
+            return hasTreeReward || hasChallengeComplete || isDead;
         }
         catch (Exception e)
         {

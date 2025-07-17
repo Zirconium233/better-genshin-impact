@@ -38,6 +38,9 @@ using BetterGenshinImpact.View.Windows;
 using BetterGenshinImpact.GameTask.GetGridIcons;
 using BetterGenshinImpact.GameTask.Model.GameUI;
 using BetterGenshinImpact.GameTask.DataCollector;
+using BetterGenshinImpact.Model;
+using System.Windows.Forms;
+using Fischless.HotkeyCapture;
 
 namespace BetterGenshinImpact.ViewModel.Pages;
 
@@ -199,6 +202,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
 
     private DataCollectorTask? _currentDataCollectorTask;
     private CancellationTokenSource? _dataCollectorCts;
+    private KeyboardHook? _dataCollectorHotkey;
 
     public TaskSettingsPageViewModel(IConfigService configService, INavigationService navigationService, TaskTriggerDispatcher taskTriggerDispatcher)
     {
@@ -213,6 +217,10 @@ public partial class TaskSettingsPageViewModel : ViewModel
         _domainNameList = ["", .. MapLazyAssets.Instance.DomainNameList];
         _autoFightViewModel = new AutoFightViewModel(Config);
         _oneDragonFlowViewModel = new OneDragonFlowViewModel();
+
+        // 初始化数据采集器快捷键 (反引号键)
+        _dataCollectorHotkey = new KeyboardHook();
+        _dataCollectorHotkey.KeyPressedEvent += OnDataCollectorHotkeyPressed;
     }
 
 
@@ -634,7 +642,11 @@ public partial class TaskSettingsPageViewModel : ViewModel
 
                 // 启动状态监控
                 StartDataCollectorStatusMonitoring();
-                Toast.Information("数据采集任务已启动");
+
+                // 注册快捷键 (反引号键)
+                _dataCollectorHotkey?.RegisterHotKey(Keys.Oemtilde);
+
+                Toast.Information("数据采集任务已启动，按 ` 键切换采集状态");
             }
             else
             {
@@ -642,6 +654,9 @@ public partial class TaskSettingsPageViewModel : ViewModel
                 Debug.WriteLine("用户请求停止数据采集任务");
                 _currentDataCollectorTask.RequestFullStop();
                 _dataCollectorCts?.Cancel();
+
+                // 注销快捷键
+                _dataCollectorHotkey?.UnregisterHotKey();
 
                 // 立即重置UI到初始状态，确保下次启动时重新创建任务实例
                 ResetDataCollectorUI();
@@ -673,7 +688,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
 
                 // 立即更新UI状态
                 DataCollectorStatusText = "正在采集";
-                DataCollectorActionButtonText = "停止采集";
+                DataCollectorActionButtonText = "停止采集(`)";
                 Toast.Information("开始数据采集");
             }
             else if (currentState == DataCollectorState.Collecting)
@@ -694,8 +709,33 @@ public partial class TaskSettingsPageViewModel : ViewModel
         }
     }
 
+    /// <summary>
+    /// 数据采集器快捷键事件处理 (反引号键)
+    /// </summary>
+    private async void OnDataCollectorHotkeyPressed(object? sender, KeyPressedEventArgs e)
+    {
+        // 只有在数据采集器启动时才响应快捷键
+        if (_currentDataCollectorTask == null || !DataCollectorActionButtonEnabled) return;
+
+        try
+        {
+            // 调用数据采集操作，相当于点击了采集按钮
+            await OnDataCollectorAction();
+        }
+        catch (Exception ex)
+        {
+            UIDispatcherHelper.Invoke(() =>
+            {
+                Toast.Error($"快捷键操作失败: {ex.Message}");
+            });
+        }
+    }
+
     private void ResetDataCollectorUI()
     {
+        // 注销快捷键
+        _dataCollectorHotkey?.UnregisterHotKey();
+
         // 更新UI状态
         SwitchDataCollectorEnabled = false;
         DataCollectorStatusText = "已停止";

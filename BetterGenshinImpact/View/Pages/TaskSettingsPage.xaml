@@ -2272,7 +2272,7 @@
                                   TextWrapping="Wrap">
                         采集游戏数据用于AI训练 -
                         <Hyperlink Command="{Binding GoToDataCollectorDocCommand}">
-                            点击查看使用教程
+                            相关信息
                         </Hyperlink>
                     </ui:TextBlock>
                     <StackPanel Grid.Row="0"
@@ -2437,28 +2437,35 @@
                     <StackPanel Grid.Row="8"
                                 Grid.Column="0"
                                 Grid.ColumnSpan="2"
-                                Orientation="Horizontal"
+                                Orientation="Vertical"
                                 Margin="0,8,36,0">
-                        <ui:ToggleSwitch Margin="0,0,16,0"
-                                         Content="保存原始截图"
-                                         IsChecked="{Binding Config.DataCollectorConfig.SaveRawScreenshots, Mode=TwoWay}" />
-                        <ui:ToggleSwitch Margin="0,0,16,0"
-                                         Content="游戏失焦时停止"
-                                         IsChecked="{Binding Config.DataCollectorConfig.StopOnGameUnfocused, Mode=TwoWay}" />
-                        <ui:ToggleSwitch Margin="0,0,16,0"
-                                         Content="调试模式"
-                                         IsChecked="{Binding Config.DataCollectorConfig.DebugMode, Mode=TwoWay}" />
-                        <ui:ToggleSwitch Margin="0,0,16,0"
-                                         Content="采集无动作帧"
-                                         IsChecked="{Binding Config.DataCollectorConfig.CollectNoActionFrames, Mode=TwoWay}" />
-                        <ui:ToggleSwitch Margin="0,0,16,0"
-                                         Content="采集结构化状态"
-                                         IsChecked="{Binding Config.DataCollectorConfig.CollectStructuredState, Mode=TwoWay}" />
-                        <ui:ToggleSwitch Margin="0,0,16,0"
-                                         Content="启用战斗检测"
-                                         IsChecked="{Binding Config.DataCollectorConfig.EnableCombatDetection, Mode=TwoWay}" />
-                        <ui:ToggleSwitch Content="启用秘境检测"
-                                         IsChecked="{Binding Config.DataCollectorConfig.EnableDomainDetection, Mode=TwoWay}" />
+                        <!-- 第一行选项 -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="保存原始截图"
+                                             IsChecked="{Binding Config.DataCollectorConfig.SaveRawScreenshots, Mode=TwoWay}" />
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="游戏失焦时停止"
+                                             IsChecked="{Binding Config.DataCollectorConfig.StopOnGameUnfocused, Mode=TwoWay}" />
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="调试模式"
+                                             IsChecked="{Binding Config.DataCollectorConfig.DebugMode, Mode=TwoWay}" />
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="采集无动作帧"
+                                             IsChecked="{Binding Config.DataCollectorConfig.CollectNoActionFrames, Mode=TwoWay}" />
+                        </StackPanel>
+                        <!-- 第二行选项 -->
+                        <StackPanel Orientation="Horizontal">
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="采集结构化状态(建议开)"
+                                             IsChecked="{Binding Config.DataCollectorConfig.CollectStructuredState, Mode=TwoWay}" />
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="启用战斗检测(慢)"
+                                             IsChecked="{Binding Config.DataCollectorConfig.EnableCombatDetection, Mode=TwoWay}" />
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="启用秘境检测"
+                                             IsChecked="{Binding Config.DataCollectorConfig.EnableDomainDetection, Mode=TwoWay}" />
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
             </StackPanel>

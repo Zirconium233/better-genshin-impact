@@ -2,6 +2,7 @@ using BetterGenshinImpact.Core.Recognition;
 using BetterGenshinImpact.Core.Recognition.OpenCv;
 using BetterGenshinImpact.Core.Recognition.OCR;
 using BetterGenshinImpact.Core.Recognition.ONNX;
+using BetterGenshinImpact.GameTask.AutoFight.Assets;
 using BetterGenshinImpact.GameTask.AutoFight.Model;
 using BetterGenshinImpact.GameTask.AutoFight.Script;
 using BetterGenshinImpact.GameTask.Common.BgiVision;
@@ -30,12 +31,15 @@ public class StateExtractionOptions
 }
 
 /// <summary>
-/// 状态提取器 - 重构版，专注于队伍信息和脚本生成
+/// 状态提取器
 /// </summary>
 public class StateExtractor
 {
     private readonly ILogger<StateExtractor> _logger = App.GetLogger<StateExtractor>();
     private CombatScenes? _combatScenes;
+
+    // YOLO预测器用于战斗检测
+    private readonly BgiYoloPredictor _predictor;
 
     // 状态缓存 - 在菜单中时保持进入菜单前的状态
     private bool _lastInCombat = false;
@@ -52,9 +56,11 @@ public class StateExtractor
     // 配置选项
     private bool _enableCombatDetection = false;
     private bool _enableDomainDetection = false;
+    private bool _debugMode = false;
 
     public StateExtractor()
     {
+        _predictor = App.ServiceProvider.GetRequiredService<BgiOnnxFactory>().CreateYoloPredictor(BgiOnnxModel.BgiWorld);
         _logger.LogInformation("状态提取器已初始化");
     }
 
@@ -74,14 +80,16 @@ public class StateExtractor
     /// <param name="enableCombatDetection">是否启用战斗检测</param>
     /// <param name="enableDomainDetection">是否启用秘境检测</param>
     /// <param name="cacheIntervalMs">缓存间隔（毫秒）</param>
-    public void ConfigureDetection(bool enableCombatDetection, bool enableDomainDetection, int cacheIntervalMs)
+    /// <param name="debugMode">是否启用调试模式</param>
+    public void ConfigureDetection(bool enableCombatDetection, bool enableDomainDetection, int cacheIntervalMs, bool debugMode = false)
     {
         _enableCombatDetection = enableCombatDetection;
         _enableDomainDetection = enableDomainDetection;
+        _debugMode = debugMode;
         SetGameContextCacheInterval(cacheIntervalMs);
 
-        _logger.LogInformation("状态检测配置: 战斗检测={Combat}, 秘境检测={Domain}, 缓存间隔={Cache}ms",
-            enableCombatDetection, enableDomainDetection, cacheIntervalMs);
+        _logger.LogInformation("状态检测配置: 战斗检测={Combat}, 秘境检测={Domain}, 缓存间隔={Cache}ms, 调试模式={Debug}",
+            enableCombatDetection, enableDomainDetection, cacheIntervalMs, debugMode);
     }
 
 
@@ -117,7 +125,7 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 提取结构化状态 - 优化版，高效复用检测结果
+    /// 提取结构化状态
     /// </summary>
     public StructuredState ExtractStructuredState(ImageRegion imageRegion)
     {
@@ -125,8 +133,13 @@ public class StateExtractor
 
         try
         {
-            // 1. 快速菜单检测 - 一行Bv调用，最可靠
-            var inMenu = Bv.IsInAnyClosableUi(imageRegion);
+            // 1. 快速菜单检测
+            var inMenu = Bv.IsInBigMapUi(imageRegion) ||
+                         Bv.IsInTalkUi(imageRegion) ||
+                         Bv.IsInAnyClosableUi(imageRegion) ||
+                         Bv.IsInPartyViewUi(imageRegion) ||
+                         Bv.IsInRevivePrompt(imageRegion) ||
+                         Bv.IsInBlessingOfTheWelkinMoon(imageRegion);
 
             // 2. 提取队伍信息和角色索引（带缓存）
             state.PlayerTeam = ExtractPlayerTeam(imageRegion);
@@ -135,7 +148,7 @@ public class StateExtractor
             // 3. 检测当前角色低血量状态（只检测当前角色）
             var isCurrentLowHp = GetCurrentCharacterLowHp(imageRegion);
 
-            // 4. 高效提取游戏上下文（使用缓存机制）
+            // 4. 高效提取游戏上下文（使用Optimized缓存机制方法）
             state.GameContext = ExtractGameContextOptimized(imageRegion, inMenu, isCurrentLowHp);
         }
         catch (Exception e)
@@ -149,7 +162,7 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 检测当前角色低血量状态 - 只检测当前角色，节约性能
+    /// 检测当前角色低血量状态 - 只检测当前角色
     /// </summary>
     private bool GetCurrentCharacterLowHp(ImageRegion imageRegion)
     {
@@ -165,17 +178,13 @@ public class StateExtractor
     }
 
     /// <summary>
-    /// 快速检测是否在战斗中 - 轻量级版本
+    /// 快速检测是否在战斗中
     /// </summary>
     public bool IsInCombat(ImageRegion imageRegion)
     {
         try
         {
-            // 使用最快的检测方法
-            return !Bv.IsInMainUi(imageRegion) &&
-                   !Bv.IsInBigMapUi(imageRegion) &&
-                   !Bv.IsInAnyClosableUi(imageRegion) &&
-                   !Bv.IsInTalkUi(imageRegion);
+            return HasFightFlagByYolo(imageRegion);
         }
         catch
         {
@@ -240,18 +249,14 @@ public class StateExtractor
 
 
     /// <summary>
-    /// 检测是否在战斗中 - 复用AutoFight的快速检测逻辑
+    /// 检测是否在战斗中 - 无法复用AutoFight的发送L的逻辑，那个需要发送按键
     /// </summary>
     private bool DetectInCombat(ImageRegion imageRegion)
     {
         try
         {
-            // 使用最快的检测方法 - 复用IsInCombat的逻辑
-            return !Bv.IsInMainUi(imageRegion) &&
-                   !Bv.IsInBigMapUi(imageRegion) &&
-                   !Bv.IsInAnyClosableUi(imageRegion) &&
-                   !Bv.IsInTalkUi(imageRegion) &&
-                   !Bv.IsInRevivePrompt(imageRegion);
+            // 跑一次autoTask 的 yolo检测，有敌人就Fight，没敌人就当不在
+            return HasFightFlagByYolo(imageRegion); // 得重新实现一下，把_predict拿过来
         }
         catch (Exception e)
         {
@@ -267,38 +272,35 @@ public class StateExtractor
     {
         try
         {
-            // 检测秘境特有的UI元素
-            // 1. 检测挑战达成提示
-            var endTipsRect = imageRegion.DeriveCrop(new Rect(0, 0, imageRegion.Width, (int)(imageRegion.Height * 0.3)));
-            var endTipsText = OcrFactory.Paddle.Ocr(endTipsRect.SrcMat);
-            if (endTipsText.Contains("挑战达成") || endTipsText.Contains("挑战完成"))
-            {
-                return true;
-            }
-
-            // 2. 检测秘境奖励界面
-            var regionList = imageRegion.FindMulti(RecognitionObject.Ocr(
-                imageRegion.Width * 0.25, imageRegion.Height * 0.2,
-                imageRegion.Width * 0.5, imageRegion.Height * 0.6));
-            if (regionList.Any(t => t.Text.Contains("石化古树") || t.Text.Contains("地脉异常")))
-            {
-                return true;
-            }
-
-            // 3. 检测启动按钮（秘境入口）
-            var ocrList = imageRegion.FindMulti(RecognitionObject.Ocr(
-                imageRegion.Width * 0.7, imageRegion.Height * 0.8,
-                imageRegion.Width * 0.25, imageRegion.Height * 0.15));
-            if (ocrList.Any(ocr => ocr.Text.Contains("启动")))
-            {
-                return true;
-            }
-
-            return false;
+            return !Bv.IsInMainUi(imageRegion); // 派蒙图标在秘境里面没有
         }
         catch (Exception e)
         {
             _logger.LogDebug(e, "秘境检测失败");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 通过YOLO检测是否有战斗标志 - 复用AutoFight的逻辑
+    /// </summary>
+    private bool HasFightFlagByYolo(ImageRegion imageRegion)
+    {
+        try
+        {
+            var dict = _predictor.Detect(imageRegion);
+            if (_debugMode) 
+            {
+                if (dict.Count > 0)
+                    _logger.LogDebug("YOLO检测结果: {Dict}", string.Join(", ", dict.Select(d => d.Key)));
+                else
+                    _logger.LogDebug("YOLO检测结果: 无");
+            }
+            return dict.ContainsKey("health_bar") || dict.ContainsKey("enemy_identify");
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "YOLO战斗检测失败");
             return false;
         }
     }
@@ -425,7 +427,14 @@ public class StateExtractor
         }
         catch (Exception e)
         {
-            _logger.LogDebug(e, "动作脚本验证失败: {Script}", actionScript);
+            if (_debugMode)
+            {
+                _logger.LogWarning(e, "动作脚本验证失败: {Script}", actionScript);
+            }
+            else
+            {
+                _logger.LogDebug(e, "动作脚本验证失败: {Script}", actionScript);
+            }
             return false;
         }
     }
