@@ -342,7 +342,7 @@ public partial class InputMonitor : IDisposable
                 }
 
                 // 如果正在暂停中，忽略所有其他输入
-                if (_isPaused)
+                if (_isPaused || IsInMenuCallback?.Invoke() == true)
                 {
                     _logger.LogDebug("暂停中，忽略输入: {Key}", e.KeyCode);
                     return;
