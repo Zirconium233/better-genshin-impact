@@ -905,7 +905,7 @@ public partial class InputMonitor : IDisposable
             Keys.D => durationSeconds > 0.05 ? $"d({durationSeconds:F1})" : "d(0.1)",
             Keys.E => durationSeconds > 0.5 ? "e(hold)" : "e",
             Keys.Q => "q",
-            Keys.LButton => durationSeconds > 0.3 ? $"charge({durationSeconds:F1})" : $"attack({durationSeconds:F1})",
+            Keys.LButton => durationSeconds > 0.3 ? $"charge({durationSeconds:F1})" : "attack(1)",
             Keys.Space => "jump",
             Keys.LShiftKey or Keys.RShiftKey => durationSeconds > 0.05 ? $"dash({durationSeconds:F1})" : "dash(0.1)",
             // 角色切换 - 使用简短的sw()格式

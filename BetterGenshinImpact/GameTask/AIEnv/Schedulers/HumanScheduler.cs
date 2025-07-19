@@ -4,6 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using BetterGenshinImpact.View.Windows;
 
 namespace BetterGenshinImpact.GameTask.AIEnv.Schedulers;
 
@@ -79,7 +80,20 @@ public class HumanScheduler : IAgentScheduler
         lock (_promptLock)
         {
             _userPrompt = prompt ?? string.Empty;
-            _logger.LogInformation("接收到用户指令: {Prompt}", prompt);
+            _logger.LogInformation("人工调度器接收到发送指令请求");
+
+            // 立即触发用户输入对话框
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await TriggerUserInput();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "处理用户指令时发生异常");
+                }
+            });
         }
     }
 
@@ -90,7 +104,13 @@ public class HumanScheduler : IAgentScheduler
             return "未启动";
         }
 
-        return "等待用户输入";
+        var queueStatus = _env?.GetActionQueueStatus();
+        if (queueStatus != null && !string.IsNullOrEmpty(queueStatus.RemainingActions))
+        {
+            return "执行中";
+        }
+
+        return "等待指令";
     }
 
     /// <summary>
@@ -98,20 +118,15 @@ public class HumanScheduler : IAgentScheduler
     /// </summary>
     private async Task SchedulerLoop()
     {
-        _logger.LogInformation("开始人工调度器循环");
+        _logger.LogInformation("开始人工调度器循环，等待用户发送指令");
 
         while (!_cts!.Token.IsCancellationRequested && IsRunning)
         {
             try
             {
-                // 检查是否需要触发用户输入
-                if (ShouldTriggerUserInput())
-                {
-                    await TriggerUserInput();
-                }
-
-                // 短暂等待
-                await Task.Delay(500, _cts.Token);
+                // 人工调度器只在收到用户指令时才工作
+                // 主循环只是保持运行状态，等待SendUserPrompt调用
+                await Task.Delay(1000, _cts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -127,29 +142,7 @@ public class HumanScheduler : IAgentScheduler
         _logger.LogInformation("人工调度器循环已结束");
     }
 
-    /// <summary>
-    /// 判断是否应该触发用户输入
-    /// </summary>
-    private bool ShouldTriggerUserInput()
-    {
-        if (_env == null)
-        {
-            return false;
-        }
 
-        var queueStatus = _env.GetActionQueueStatus();
-        
-        // 当动作队列为空或只剩一个动作组时触发
-        var remainingActions = queueStatus.RemainingActions;
-        if (string.IsNullOrEmpty(remainingActions))
-        {
-            return true;
-        }
-
-        // 检查是否只剩一个动作组
-        var actionGroups = remainingActions.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        return actionGroups.Length <= 1;
-    }
 
     /// <summary>
     /// 触发用户输入
@@ -158,7 +151,7 @@ public class HumanScheduler : IAgentScheduler
     {
         try
         {
-            _logger.LogInformation("触发用户输入对话框");
+            _logger.LogInformation("显示人工调度器输入对话框");
 
             // 在UI线程上显示输入对话框
             string? userInput = null;
@@ -179,7 +172,7 @@ public class HumanScheduler : IAgentScheduler
 
                 // 提交动作脚本到环境
                 _env?.AddCommands(userInput);
-                _logger.LogInformation("用户输入动作脚本: {ActionScript}", userInput);
+                _logger.LogInformation("人工调度器提交动作脚本: {ActionScript}", userInput);
             }
             else
             {
@@ -188,7 +181,7 @@ public class HumanScheduler : IAgentScheduler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "触发用户输入时发生异常");
+            _logger.LogError(ex, "人工调度器触发用户输入时发生异常");
         }
     }
 
@@ -199,117 +192,12 @@ public class HumanScheduler : IAgentScheduler
     {
         try
         {
-            var dialog = new InputDialog
-            {
-                Title = "AI环境 - 人工调度器",
-                Prompt = "请输入动作脚本 (例如: w(1.0),e 或 exit 退出):",
-                DefaultValue = "",
-                Owner = Application.Current.MainWindow,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner
-            };
-
-            var result = dialog.ShowDialog();
-            return result == true ? dialog.InputText : null;
+            return AIEnvInputDialog.ShowInputDialog(Application.Current.MainWindow, "");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "显示输入对话框时发生异常");
             return null;
         }
-    }
-}
-
-/// <summary>
-/// 简单的输入对话框
-/// </summary>
-public partial class InputDialog : Window
-{
-    public string InputText { get; private set; } = string.Empty;
-    public string Prompt { get; set; } = "请输入:";
-    public string DefaultValue { get; set; } = string.Empty;
-
-    public InputDialog()
-    {
-        InitializeComponent();
-        DataContext = this;
-    }
-
-    private void InitializeComponent()
-    {
-        Title = "输入";
-        Width = 400;
-        Height = 200;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        ResizeMode = ResizeMode.NoResize;
-
-        var grid = new System.Windows.Controls.Grid();
-        grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = System.Windows.GridLength.Auto });
-        grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = System.Windows.GridLength.Auto });
-        grid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = System.Windows.GridLength.Auto });
-
-        // 提示文本
-        var promptLabel = new System.Windows.Controls.Label
-        {
-            Content = Prompt,
-            Margin = new Thickness(10)
-        };
-        System.Windows.Controls.Grid.SetRow(promptLabel, 0);
-        grid.Children.Add(promptLabel);
-
-        // 输入框
-        var inputTextBox = new System.Windows.Controls.TextBox
-        {
-            Name = "InputTextBox",
-            Text = DefaultValue,
-            Margin = new Thickness(10, 0, 10, 10),
-            Height = 25
-        };
-        System.Windows.Controls.Grid.SetRow(inputTextBox, 1);
-        grid.Children.Add(inputTextBox);
-
-        // 按钮面板
-        var buttonPanel = new System.Windows.Controls.StackPanel
-        {
-            Orientation = System.Windows.Controls.Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(10)
-        };
-
-        var okButton = new System.Windows.Controls.Button
-        {
-            Content = "确定",
-            Width = 75,
-            Height = 25,
-            Margin = new Thickness(0, 0, 10, 0),
-            IsDefault = true
-        };
-        okButton.Click += (s, e) =>
-        {
-            InputText = inputTextBox.Text;
-            DialogResult = true;
-        };
-
-        var cancelButton = new System.Windows.Controls.Button
-        {
-            Content = "取消",
-            Width = 75,
-            Height = 25,
-            IsCancel = true
-        };
-        cancelButton.Click += (s, e) =>
-        {
-            DialogResult = false;
-        };
-
-        buttonPanel.Children.Add(okButton);
-        buttonPanel.Children.Add(cancelButton);
-
-        System.Windows.Controls.Grid.SetRow(buttonPanel, 2);
-        grid.Children.Add(buttonPanel);
-
-        Content = grid;
-
-        // 设置焦点到输入框
-        Loaded += (s, e) => inputTextBox.Focus();
     }
 }

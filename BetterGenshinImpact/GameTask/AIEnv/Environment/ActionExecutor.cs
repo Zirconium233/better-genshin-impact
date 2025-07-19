@@ -417,16 +417,91 @@ public class ActionExecutor
     }
 
     /// <summary>
-    /// 执行攻击动作
+    /// 执行攻击动作 - 兼容基于次数和基于时间的语法
+    /// attack(2) - 攻击2次
+    /// attack(0.5) - 持续攻击0.5秒
     /// </summary>
     private async Task ExecuteAttackAction(GameAction action, CancellationToken cancellationToken)
     {
-        if (action.DurationSeconds > 0.1) // 持续攻击
+        if (string.IsNullOrEmpty(action.Parameter))
+        {
+            // 默认单次攻击
+            Simulation.SendInput.SimulateAction(GIActions.NormalAttack, KeyType.KeyPress);
+            return;
+        }
+
+        // 判断是基于次数还是基于时间
+        if (action.Parameter.Contains('.'))
+        {
+            // 基于时间的攻击 - attack(0.5)
+            await ExecuteTimeBasedAttack(action, cancellationToken);
+        }
+        else
+        {
+            // 基于次数的攻击 - attack(2)
+            await ExecuteCountBasedAttack(action, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// 执行基于次数的攻击
+    /// </summary>
+    private async Task ExecuteCountBasedAttack(GameAction action, CancellationToken cancellationToken)
+    {
+        int attackCount = 1;
+        if (int.TryParse(action.Parameter, out int parsedCount))
+        {
+            attackCount = Math.Max(1, Math.Min(parsedCount, 10)); // 限制在1-10次之间
+        }
+
+        _logger.LogInformation("执行普通攻击 {Count} 次", attackCount);
+
+        // 参考AutoFight的实现，每次攻击间隔200ms
+        for (int i = 0; i < attackCount; i++)
+        {
+            // 检查是否被取消
+            if (cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogInformation("攻击动作被取消，已执行 {ExecutedCount}/{TotalCount} 次", i, attackCount);
+                break;
+            }
+
+            // 检查是否有冲突的新动作（打断逻辑）
+            if (ShouldInterruptAttack())
+            {
+                _logger.LogInformation("检测到冲突动作，攻击被打断，已执行 {ExecutedCount}/{TotalCount} 次", i, attackCount);
+                break;
+            }
+
+            // 执行单次攻击
+            Simulation.SendInput.SimulateAction(GIActions.NormalAttack, KeyType.KeyPress);
+
+            // 如果不是最后一次攻击，等待间隔
+            if (i < attackCount - 1)
+            {
+                await Task.Delay(200, cancellationToken); // 200ms间隔，参考AutoFight实现
+            }
+        }
+    }
+
+    /// <summary>
+    /// 执行基于时间的攻击
+    /// </summary>
+    private async Task ExecuteTimeBasedAttack(GameAction action, CancellationToken cancellationToken)
+    {
+        if (!double.TryParse(action.Parameter, out double durationSeconds))
+        {
+            durationSeconds = 0.1; // 默认0.1秒
+        }
+
+        _logger.LogInformation("执行持续攻击 {Duration} 秒", durationSeconds);
+
+        if (durationSeconds > 0.1) // 持续攻击
         {
             Simulation.SendInput.SimulateAction(GIActions.NormalAttack, KeyType.KeyDown);
             try
             {
-                await Task.Delay((int)(action.DurationSeconds * 1000), cancellationToken);
+                await Task.Delay((int)(durationSeconds * 1000), cancellationToken);
             }
             finally
             {
@@ -437,6 +512,17 @@ public class ActionExecutor
         {
             Simulation.SendInput.SimulateAction(GIActions.NormalAttack, KeyType.KeyPress);
         }
+    }
+
+    /// <summary>
+    /// 检查是否应该打断当前攻击
+    /// </summary>
+    private bool ShouldInterruptAttack()
+    {
+        // 检查是否有新的冲突动作在队列中等待
+        // 这里可以检查队列中是否有charge、e、q等冲突动作
+        // 简化实现：如果有新的动作组在等待，就打断当前攻击
+        return false; // Placeholder，可以根据需要实现更复杂的打断逻辑
     }
 
     /// <summary>

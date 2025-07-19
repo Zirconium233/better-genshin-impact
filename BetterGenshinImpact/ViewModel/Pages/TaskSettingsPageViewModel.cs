@@ -1049,7 +1049,9 @@ public partial class TaskSettingsPageViewModel : ViewModel
             await Task.Delay(1000);
             aiEnv.AddCommands("q");
             await Task.Delay(1000);
-            aiEnv.AddCommands("attack(0.5)");
+            aiEnv.AddCommands("attack(3)"); // 基于次数的攻击
+            await Task.Delay(1000);
+            aiEnv.AddCommands("attack(0.5)"); // 基于时间的攻击
             await Task.Delay(1000);
             aiEnv.AddCommands("charge(1.0)");
             await Task.Delay(1500);
@@ -1074,9 +1076,9 @@ public partial class TaskSettingsPageViewModel : ViewModel
             logger.LogInformation("=== 第五组：额外测试 - 主要命令顺序执行 ===");
             Toast.Information("执行第五组：主要命令顺序执行测试");
 
-            // 顺序执行主要命令：attack, e, charge, jump, f, q, e(hold)
-            aiEnv.AddCommands("attack(0.5),e,charge(1.0),jump,f,q,e(hold)");
-            logger.LogInformation("已发送主要命令序列: attack(0.5),e,charge(1.0),jump,f,q,e(hold)");
+            // 顺序执行主要命令：attack(次数), attack(时间), e, charge, jump, f, q, e(hold)
+            aiEnv.AddCommands("attack(2),attack(0.3),e,charge(1.0),jump,f,q,e(hold)");
+            logger.LogInformation("已发送主要命令序列: attack(2),attack(0.3),e,charge(1.0),jump,f,q,e(hold)");
 
             // 等待所有动作完成
             await Task.Delay(5000);
@@ -1360,7 +1362,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
                 "w(999999)", // 超大参数
                 "w(abc)", // 非数字参数
                 "w(1)&w(2)&w(3)&w(4)&w(5)", // 过多同时动作
-                "w(1),a(2),s(3),d(4),e,q,attack(1),charge(2),sw(1),sw(2)", // 过长指令
+                "w(1),a(2),s(3),d(4),e,q,attack(5),attack(0.8),charge(2),sw(1),sw(2)", // 过长指令，包含两种attack语法
                 "w(1)&", // 语法错误
                 ",w(1)", // 语法错误
                 "w(1),,a(2)", // 双逗号
