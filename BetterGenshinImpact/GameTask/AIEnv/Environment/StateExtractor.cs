@@ -138,8 +138,8 @@ public class StateExtractor
             state.GameContext = new AIEnv.Model.GameContext
             {
                 InMenu = inMenu,
-                InCombat = false, // 硬编码为false，不检测战斗状态
-                InDomain = false, // 暂时硬编码为false，避免复杂的秘境检测
+                InCombat = false, // 硬编码为false，scheduler应手动处理或移除此字段
+                InDomain = false, // 硬编码为false，scheduler应手动处理或移除此字段
                 IsCurrentLowHp = isCurrentLowHp
             };
 
@@ -315,8 +315,8 @@ public class StateExtractor
         var context = new AIEnv.Model.GameContext
         {
             InMenu = false,
-            InCombat = false, // 硬编码为false，不检测战斗状态
-            InDomain = false, // 硬编码为false，不检测秘境状态
+            InCombat = false, // 硬编码为false，scheduler应手动处理或移除此字段
+            InDomain = false, // 硬编码为false，scheduler应手动处理或移除此字段
             IsCurrentLowHp = isCurrentLowHp
         };
 

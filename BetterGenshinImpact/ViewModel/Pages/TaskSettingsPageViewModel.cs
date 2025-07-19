@@ -23,7 +23,7 @@ using Windows.System;
 using BetterGenshinImpact.GameTask.AutoFishing;
 using BetterGenshinImpact.GameTask.Common.Element.Assets;
 using BetterGenshinImpact.GameTask.AIEnv;
-using BetterGenshinImpact.GameTask.AIEnv.Test;
+using BetterGenshinImpact.GameTask.AIEnv.Environment;
 using Microsoft.Extensions.Logging;
 using BetterGenshinImpact.Helpers;
 using Wpf.Ui;
@@ -1070,6 +1070,17 @@ public partial class TaskSettingsPageViewModel : ViewModel
             // 等待动作完成
             await Task.Delay(3000);
 
+            // 第五组：额外测试 - 主要命令顺序执行
+            logger.LogInformation("=== 第五组：额外测试 - 主要命令顺序执行 ===");
+            Toast.Information("执行第五组：主要命令顺序执行测试");
+
+            // 顺序执行主要命令：attack, e, charge, jump, f, q, e(hold)
+            aiEnv.AddCommands("attack(0.5),e,charge(1.0),jump,f,q,e(hold)");
+            logger.LogInformation("已发送主要命令序列: attack(0.5),e,charge(1.0),jump,f,q,e(hold)");
+
+            // 等待所有动作完成
+            await Task.Delay(5000);
+
             Toast.Success("动作测试完成！请查看日志了解详细执行情况");
         }
         catch (Exception ex)
@@ -1135,10 +1146,10 @@ public partial class TaskSettingsPageViewModel : ViewModel
             logger.LogInformation("观察数据JSON格式:\n{ObsJson}", json);
 
             // 添加几个动作组再观察
-            Toast.Information("添加动作组并观察队列变化...");
-            aiEnv.AddCommands("w(2)");
-            aiEnv.AddCommands("a(1)");
-            aiEnv.AddCommands("e");
+            Toast.Information("添加长时间动作并观察队列变化...");
+            aiEnv.AddCommands("w(1.0)");
+            aiEnv.AddCommands("a(1.5)");
+            aiEnv.AddCommands("charge(2.0)");
 
             await Task.Delay(500); // 等待队列更新
 
@@ -1183,41 +1194,136 @@ public partial class TaskSettingsPageViewModel : ViewModel
 
             var aiEnv = _currentAIEnvTask.GetAIEnvironment()!;
             var logger = App.GetLogger<TaskSettingsPageViewModel>();
-            var times = new List<double>();
 
-            logger.LogInformation("=== 性能测试：连续获取10次观察数据 ===");
+            // 组1：快速获取测试
+            await RunQuickObservationTest(aiEnv, logger);
 
-            for (int i = 0; i < 10; i++)
-            {
-                var stopwatch = Stopwatch.StartNew();
-                var observation = aiEnv.GetLatestObservation();
-                stopwatch.Stop();
+            // 组2：观察间隔测试
+            await RunObservationIntervalTest(aiEnv, logger);
 
-                var elapsedMs = stopwatch.Elapsed.TotalMilliseconds;
-                times.Add(elapsedMs);
+            // 组3：详细性能统计测试
+            await RunDetailedPerformanceTest(aiEnv, logger);
 
-                logger.LogInformation("第{Index}次获取观察数据耗时: {ElapsedMs:F2}ms", i + 1, elapsedMs);
-
-                // 短暂延迟避免过于频繁
-                await Task.Delay(100);
-            }
-
-            var avgTime = times.Average();
-            var minTime = times.Min();
-            var maxTime = times.Max();
-
-            logger.LogInformation("=== 性能测试结果 ===");
-            logger.LogInformation("平均耗时: {AvgTime:F2}ms", avgTime);
-            logger.LogInformation("最小耗时: {MinTime:F2}ms", minTime);
-            logger.LogInformation("最大耗时: {MaxTime:F2}ms", maxTime);
-            logger.LogInformation("理论最大FPS: {MaxFps:F2}", 1000.0 / avgTime);
-
-            Toast.Success($"性能测试完成！平均耗时: {avgTime:F2}ms");
+            Toast.Success("性能测试完成！请查看日志了解详细结果");
         }
         catch (Exception ex)
         {
             Toast.Error($"执行性能测试时发生错误: {ex.Message}");
         }
+    }
+
+    private async Task RunQuickObservationTest(AIEnvironment aiEnv, ILogger logger)
+    {
+        logger.LogInformation("=== 组1：快速获取测试 ===");
+        var times = new List<double>();
+
+        for (int i = 0; i < 5; i++)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var observation = aiEnv.GetLatestObservation();
+            stopwatch.Stop();
+
+            var elapsedMs = stopwatch.Elapsed.TotalMilliseconds;
+            times.Add(elapsedMs);
+
+            logger.LogInformation("第{Index}次快速获取耗时: {ElapsedMs:F2}ms", i + 1, elapsedMs);
+            await Task.Delay(10); // 短暂延迟
+        }
+
+        var avgTime = times.Average();
+        logger.LogInformation("快速获取平均耗时: {AvgTime:F2}ms", avgTime);
+    }
+
+    private async Task RunObservationIntervalTest(AIEnvironment aiEnv, ILogger logger)
+    {
+        logger.LogInformation("=== 组2：观察间隔测试 ===");
+
+        // 从配置获取环境FPS
+        var envFps = Config.AIEnvConfig.EnvFps;
+        var expectedIntervalMs = 1000.0 / envFps;
+        logger.LogInformation("环境配置FPS: {EnvFps}, 预期间隔: {ExpectedInterval:F2}ms", envFps, expectedIntervalMs);
+
+        var timestamps = new List<long>();
+        var firstObservation = aiEnv.GetLatestObservation();
+        if (firstObservation == null)
+        {
+            logger.LogWarning("无法获取初始观察数据");
+            return;
+        }
+
+        var baseTimestamp = firstObservation.TimestampMs;
+        timestamps.Add(0); // 第一帧偏移为0
+
+        // 50ms频率获取观察数据，共获取20次
+        for (int i = 1; i < 20; i++)
+        {
+            await Task.Delay(50);
+            var observation = aiEnv.GetLatestObservation();
+            if (observation != null)
+            {
+                var offset = observation.TimestampMs - baseTimestamp;
+                timestamps.Add(offset);
+                logger.LogInformation("第{Index}次观察，时间戳偏移: {Offset}ms", i + 1, offset);
+            }
+        }
+
+        // 分析时间戳偏移
+        var intervals = new List<long>();
+        for (int i = 1; i < timestamps.Count; i++)
+        {
+            var interval = timestamps[i] - timestamps[i - 1];
+            if (interval > 0) // 只记录有变化的间隔
+            {
+                intervals.Add(interval);
+            }
+        }
+
+        if (intervals.Count > 0)
+        {
+            var minInterval = intervals.Min();
+            var maxInterval = intervals.Max();
+            var avgInterval = intervals.Average();
+            var stdDev = Math.Sqrt(intervals.Select(x => Math.Pow(x - avgInterval, 2)).Average());
+
+            logger.LogInformation("=== 帧更新频率分析 ===");
+            logger.LogInformation("最小更新间隔: {MinInterval}ms", minInterval);
+            logger.LogInformation("最大更新间隔: {MaxInterval}ms", maxInterval);
+            logger.LogInformation("平均更新间隔: {AvgInterval:F2}ms", avgInterval);
+            logger.LogInformation("标准差: {StdDev:F2}ms", stdDev);
+            logger.LogInformation("与预期间隔偏差: {Deviation:F2}ms", Math.Abs(avgInterval - expectedIntervalMs));
+        }
+        else
+        {
+            logger.LogWarning("未检测到帧更新");
+        }
+    }
+
+    private async Task RunDetailedPerformanceTest(AIEnvironment aiEnv, ILogger logger)
+    {
+        logger.LogInformation("=== 组3：详细性能统计测试 ===");
+
+        // 开启AI环境的性能统计
+        aiEnv.EnablePerformanceStats(true);
+
+        // 等待收集10次统计数据
+        for (int i = 0; i < 10; i++)
+        {
+            await Task.Delay(250); // 等待一个观察周期
+            var observation = aiEnv.GetLatestObservation();
+            logger.LogInformation("第{Index}次详细性能测试观察完成", i + 1);
+        }
+
+        // 获取并打印性能统计
+        var stats = aiEnv.GetPerformanceStats();
+        logger.LogInformation("=== 详细性能统计结果 ===");
+        logger.LogInformation("帧提取平均时间: {CaptureTime:F2}ms", stats.AvgCaptureTimeMs);
+        logger.LogInformation("帧压缩平均时间: {CompressTime:F2}ms", stats.AvgCompressTimeMs);
+        logger.LogInformation("状态提取平均时间: {StateTime:F2}ms", stats.AvgStateExtractionTimeMs);
+        logger.LogInformation("队列获取平均时间: {QueueTime:F2}ms", stats.AvgQueueTimeMs);
+        logger.LogInformation("总处理平均时间: {TotalTime:F2}ms", stats.AvgTotalTimeMs);
+
+        // 关闭性能统计
+        aiEnv.EnablePerformanceStats(false);
     }
 
     [RelayCommand]
@@ -1235,9 +1341,13 @@ public partial class TaskSettingsPageViewModel : ViewModel
 
             var aiEnv = _currentAIEnvTask.GetAIEnvironment()!;
             var logger = App.GetLogger<TaskSettingsPageViewModel>();
-            var errorCount = 0;
 
             logger.LogInformation("=== 异常测试：极端输入和错误处理 ===");
+
+            // 重置错误计数
+            aiEnv.ResetErrorCount();
+            var initialErrorCount = aiEnv.GetErrorCount();
+            logger.LogInformation("初始错误计数: {InitialCount}", initialErrorCount);
 
             // 测试各种不合法输入
             var invalidInputs = new[]
@@ -1254,52 +1364,70 @@ public partial class TaskSettingsPageViewModel : ViewModel
                 "w(1)&", // 语法错误
                 ",w(1)", // 语法错误
                 "w(1),,a(2)", // 双逗号
-                "w(1)&&a(2)" // 双&符号
+                "w(1)&&a(2)", // 双&符号
+                "invalid_action2", // 再次无效动作
+                "w(-999)", // 再次负数
+                "超长动作名称测试", // 中文无效动作
+                "null", // 字符串null
+                "undefined" // 未定义动作
             };
 
+            var testExceptionCount = 0;
             foreach (var input in invalidInputs)
             {
                 try
                 {
-                    logger.LogInformation("测试输入: '{Input}'", input ?? "null");
-                    if (input != null)
-                    {
-                        aiEnv.AddCommands(input);
-                    }
+                    logger.LogInformation("测试输入: '{Input}'", input);
+                    aiEnv.AddCommands(input);
                     await Task.Delay(100);
+
+                    // 检查环境错误计数是否增加
+                    var currentErrorCount = aiEnv.GetErrorCount();
+                    if (currentErrorCount > initialErrorCount)
+                    {
+                        logger.LogInformation("输入 '{Input}' 导致环境内部错误计数增加到: {ErrorCount}", input, currentErrorCount);
+                        initialErrorCount = currentErrorCount;
+                    }
                 }
                 catch (Exception ex)
                 {
-                    errorCount++;
-                    logger.LogWarning("输入 '{Input}' 引发异常: {Error}", input ?? "null", ex.Message);
+                    testExceptionCount++;
+                    logger.LogWarning("输入 '{Input}' 引发测试异常: {Error}", input, ex.Message);
+                }
+
+                // 检查环境是否因错误过多而停止
+                if (!aiEnv.IsRunning)
+                {
+                    logger.LogWarning("环境在处理输入 '{Input}' 后停止运行", input);
+                    break;
                 }
             }
 
             logger.LogInformation("=== 异常测试结果 ===");
             logger.LogInformation("总测试输入: {TotalInputs}", invalidInputs.Length);
-            logger.LogInformation("引发异常数量: {ErrorCount}", errorCount);
+            logger.LogInformation("测试过程中引发异常数量: {TestExceptionCount}", testExceptionCount);
 
-            // 检查环境是否仍在运行和错误计数
+            // 检查最终状态
             var isStillRunning = aiEnv.IsRunning;
-            var envErrorCount = aiEnv.GetErrorCount();
+            var finalErrorCount = aiEnv.GetErrorCount();
             logger.LogInformation("环境运行状态: {IsRunning}", isStillRunning ? "正常运行" : "已停止");
-            logger.LogInformation("环境内部错误计数: {EnvErrorCount}", envErrorCount);
+            logger.LogInformation("环境最终错误计数: {FinalErrorCount}", finalErrorCount);
 
-            if (envErrorCount >= 5)
+            if (finalErrorCount >= 5)
             {
-                logger.LogWarning("环境内部错误数量达到{ErrorCount}次，检查环境是否应该终止", envErrorCount);
+                logger.LogWarning("环境内部错误数量达到{ErrorCount}次，检查环境是否应该终止", finalErrorCount);
                 if (isStillRunning)
                 {
-                    Toast.Warning($"环境在{envErrorCount}次内部错误后仍在运行，可能需要改进错误处理机制");
+                    Toast.Warning($"环境在{finalErrorCount}次内部错误后仍在运行，可能需要改进错误处理机制");
                 }
                 else
                 {
-                    Toast.Information($"环境在{envErrorCount}次内部错误后正确终止运行");
+                    Toast.Information($"环境在{finalErrorCount}次内部错误后正确终止运行");
                 }
             }
             else
             {
-                Toast.Success($"异常测试完成！环境正确处理了{errorCount}个异常输入，内部错误计数: {envErrorCount}");
+                Toast.Success($"异常测试完成！环境内部错误计数: {finalErrorCount}，测试异常: {testExceptionCount}");
             }
         }
         catch (Exception ex)

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -28,10 +29,15 @@ public class ActionQueueManager
     private ActionGroup? _currentActionGroup;
     private ActionExecutor? _actionExecutor; // 新增ActionExecutor引用
 
+    // 错误处理
+    private int _errorCount = 0;
+    private readonly int _maxErrorCount;
+
     public ActionQueueManager(AIEnvParam param)
     {
         _param = param;
         _logger = App.GetLogger<ActionQueueManager>();
+        _maxErrorCount = param.MaxErrorCount;
     }
 
     /// <summary>
@@ -58,18 +64,18 @@ public class ActionQueueManager
             {
                 // 解析动作脚本
                 var actionGroups = ParseActionScript(actionScript);
-                
+
                 if (actionGroups.Count == 0)
                 {
                     _logger.LogWarning("解析动作脚本失败或为空: {ActionScript}", actionScript);
-                    return;
+                    throw new ArgumentException($"解析动作脚本失败或为空: {actionScript}");
                 }
 
                 // 验证动作脚本
                 if (!ValidateActionScript(actionGroups))
                 {
                     _logger.LogError("动作脚本验证失败: {ActionScript}", actionScript);
-                    return;
+                    throw new ArgumentException($"动作脚本验证失败: {actionScript}");
                 }
 
                 // 处理队列合并或替换
@@ -92,7 +98,20 @@ public class ActionQueueManager
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "添加动作指令失败: {ActionScript}", actionScript);
+                _errorCount++;
+                _logger.LogError(ex, "添加动作指令失败: {ActionScript}, 错误计数: {ErrorCount}/{MaxErrorCount}",
+                    actionScript, _errorCount, _maxErrorCount);
+
+                // 如果错误次数达到阈值，抛出特殊异常并清零计数
+                if (_errorCount >= _maxErrorCount)
+                {
+                    _logger.LogError("错误次数达到上限 {MaxErrorCount}，抛出异常并重置计数", _maxErrorCount);
+                    _errorCount = 0; // 清零计数
+                    throw new InvalidOperationException($"动作队列错误次数达到上限 {_maxErrorCount}，请检查输入");
+                }
+
+                // 重新抛出原始异常
+                throw;
             }
         }
     }
@@ -219,8 +238,8 @@ public class ActionQueueManager
 
         try
         {
-            // 按逗号分割动作组
-            var groups = actionScript.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            // 智能分割动作组，考虑括号内的逗号
+            var groups = SplitActionGroups(actionScript);
 
             foreach (var group in groups)
             {
@@ -243,6 +262,52 @@ public class ActionQueueManager
         return actionGroups;
     }
 
+    /// <summary>
+    /// 智能分割动作组，考虑括号内的逗号
+    /// </summary>
+    private List<string> SplitActionGroups(string actionScript)
+    {
+        var groups = new List<string>();
+        var currentGroup = new StringBuilder();
+        var parenthesesLevel = 0;
+
+        for (int i = 0; i < actionScript.Length; i++)
+        {
+            char c = actionScript[i];
+
+            if (c == '(')
+            {
+                parenthesesLevel++;
+                currentGroup.Append(c);
+            }
+            else if (c == ')')
+            {
+                parenthesesLevel--;
+                currentGroup.Append(c);
+            }
+            else if (c == ',' && parenthesesLevel == 0)
+            {
+                // 只有在括号外的逗号才作为分隔符
+                if (currentGroup.Length > 0)
+                {
+                    groups.Add(currentGroup.ToString().Trim());
+                    currentGroup.Clear();
+                }
+            }
+            else
+            {
+                currentGroup.Append(c);
+            }
+        }
+
+        // 添加最后一个组
+        if (currentGroup.Length > 0)
+        {
+            groups.Add(currentGroup.ToString().Trim());
+        }
+
+        return groups;
+    }
 
 
 
@@ -255,7 +320,7 @@ public class ActionQueueManager
         try
         {
             var actions = new List<GameAction>();
-            
+
             // 按&分割同步动作
             var syncActions = groupText.Split('&', StringSplitOptions.RemoveEmptyEntries);
 
@@ -322,7 +387,16 @@ public class ActionQueueManager
     /// </summary>
     private double ParseDuration(string actionType, string parameter)
     {
-        var defaultDuration = actionType.ToLower() switch
+        var actionTypeLower = actionType.ToLower();
+
+        // 瞬时动作，不需要持续时间
+        if (actionTypeLower == "moveby" || actionTypeLower == "sw" ||
+            actionTypeLower == "jump" || actionTypeLower == "f" || actionTypeLower == "t")
+        {
+            return 0.0; // 瞬时动作
+        }
+
+        var defaultDuration = actionTypeLower switch
         {
             "w" or "a" or "s" or "d" => 0.1,   // 移动默认0.1秒
             "attack" => 0.1,                   // 攻击默认0.1秒
@@ -663,6 +737,23 @@ public class ActionQueueManager
         {
             _logger.LogDebug("替换所有动作，添加 {NewCount} 个新动作组", newActionGroups.Count);
         }
+    }
+
+    /// <summary>
+    /// 获取错误计数
+    /// </summary>
+    public int GetErrorCount()
+    {
+        return _errorCount;
+    }
+
+    /// <summary>
+    /// 重置错误计数
+    /// </summary>
+    public void ResetErrorCount()
+    {
+        _errorCount = 0;
+        _logger.LogInformation("动作队列错误计数已重置");
     }
 }
 

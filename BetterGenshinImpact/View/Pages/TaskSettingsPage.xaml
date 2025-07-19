@@ -2569,13 +2569,28 @@
                                   ValidationMode="InvalidInputOverwritten"
                                   Value="{Binding Config.AIEnvConfig.EnvFps, Mode=TwoWay}" />
 
-                    <!-- API端点地址 -->
+                    <!-- 时间补偿 -->
                     <ui:TextBlock Grid.Row="2"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="时间补偿 (ms)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="2"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="0"
+                                  Maximum="200"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.AIEnvConfig.TimeCompensationMs, Mode=TwoWay}" />
+
+                    <!-- API端点地址 -->
+                    <ui:TextBlock Grid.Row="3"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="API端点地址"
                                   VerticalAlignment="Center" />
-                    <ui:TextBox Grid.Row="2"
+                    <ui:TextBox Grid.Row="3"
                                 Grid.Column="1"
                                 Margin="0,0,36,8"
                                 MinWidth="300"
@@ -2583,12 +2598,12 @@
                                 TextWrapping="Wrap" />
 
                     <!-- 用户提示词 -->
-                    <ui:TextBlock Grid.Row="3"
+                    <ui:TextBlock Grid.Row="4"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="用户提示词"
                                   VerticalAlignment="Center" />
-                    <ui:TextBox Grid.Row="3"
+                    <ui:TextBox Grid.Row="4"
                                 Grid.Column="1"
                                 Margin="0,0,36,8"
                                 MinWidth="300"
@@ -2596,12 +2611,12 @@
                                 TextWrapping="Wrap" />
 
                     <!-- 截图质量 -->
-                    <ui:TextBlock Grid.Row="4"
+                    <ui:TextBlock Grid.Row="5"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="截图质量 (1-100)"
                                   VerticalAlignment="Center" />
-                    <ui:NumberBox Grid.Row="4"
+                    <ui:NumberBox Grid.Row="5"
                                   Grid.Column="1"
                                   Margin="0,0,36,8"
                                   MinWidth="120"
@@ -2613,12 +2628,12 @@
 
 
                     <!-- 最大动作持续时间 -->
-                    <ui:TextBlock Grid.Row="5"
+                    <ui:TextBlock Grid.Row="6"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="最大动作持续时间 (秒)"
                                   VerticalAlignment="Center" />
-                    <ui:NumberBox Grid.Row="5"
+                    <ui:NumberBox Grid.Row="6"
                                   Grid.Column="1"
                                   Margin="0,0,36,8"
                                   MinWidth="120"
@@ -2628,12 +2643,12 @@
                                   Value="{Binding Config.AIEnvConfig.MaxActionDuration, Mode=TwoWay}" />
 
                     <!-- 错误终止次数 -->
-                    <ui:TextBlock Grid.Row="6"
+                    <ui:TextBlock Grid.Row="7"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="错误终止次数"
                                   VerticalAlignment="Center" />
-                    <ui:NumberBox Grid.Row="6"
+                    <ui:NumberBox Grid.Row="7"
                                   Grid.Column="1"
                                   Margin="0,0,36,8"
                                   MinWidth="120"
@@ -2643,12 +2658,12 @@
                                   Value="{Binding Config.AIEnvConfig.ErrorTerminationCount, Mode=TwoWay}" />
 
                     <!-- 历史帧缓冲大小 -->
-                    <ui:TextBlock Grid.Row="7"
+                    <ui:TextBlock Grid.Row="8"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="历史帧缓冲大小"
                                   VerticalAlignment="Center" />
-                    <ui:NumberBox Grid.Row="7"
+                    <ui:NumberBox Grid.Row="8"
                                   Grid.Column="1"
                                   Margin="0,0,36,8"
                                   MinWidth="120"
@@ -2658,7 +2673,7 @@
                                   Value="{Binding Config.AIEnvConfig.ReplayBufferSize, Mode=TwoWay}" />
 
                     <!-- 其他选项 -->
-                    <StackPanel Grid.Row="8"
+                    <StackPanel Grid.Row="9"
                                 Grid.Column="0"
                                 Grid.ColumnSpan="2"
                                 Orientation="Vertical"

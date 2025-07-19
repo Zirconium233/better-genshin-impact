@@ -18,6 +18,13 @@ public partial class AIEnvConfig : ObservableValidator
     private int _envFps = 5;
 
     /// <summary>
+    /// 时间补偿（毫秒），用于补偿处理时间以达到准确的帧间隔
+    /// </summary>
+    [ObservableProperty]
+    [Range(0, 200)]
+    private int _timeCompensationMs = 70;
+
+    /// <summary>
     /// 调度器类型
     /// </summary>
     [ObservableProperty]

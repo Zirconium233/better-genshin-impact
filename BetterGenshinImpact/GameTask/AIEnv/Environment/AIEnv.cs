@@ -2,10 +2,25 @@ using BetterGenshinImpact.GameTask.AIEnv.Model;
 using BetterGenshinImpact.GameTask.Common;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace BetterGenshinImpact.GameTask.AIEnv.Environment;
+
+/// <summary>
+/// 性能统计数据
+/// </summary>
+public class PerformanceStats
+{
+    public double AvgCaptureTimeMs { get; set; }
+    public double AvgCompressTimeMs { get; set; }
+    public double AvgStateExtractionTimeMs { get; set; }
+    public double AvgQueueTimeMs { get; set; }
+    public double AvgTotalTimeMs { get; set; }
+}
 
 /// <summary>
 /// AI环境核心类
@@ -25,9 +40,16 @@ public class AIEnvironment
     private readonly object _observationLock = new();
     private Observation? _latestObservation;
 
-    // 错误处理
-    private int _errorCount = 0;
-    private readonly int _maxErrorCount = 5;
+
+
+    // 性能统计
+    private bool _enablePerformanceStats = false;
+    private readonly List<double> _captureTimesMs = new();
+    private readonly List<double> _compressTimesMs = new();
+    private readonly List<double> _stateExtractionTimesMs = new();
+    private readonly List<double> _queueTimesMs = new();
+    private readonly List<double> _totalTimesMs = new();
+    private readonly object _statsLock = new();
 
     public bool IsRunning { get; private set; }
 
@@ -141,33 +163,8 @@ public class AIEnvironment
             _logger.LogDebug("接收到动作脚本: {ActionScript}", actionScript);
         }
 
-        try
-        {
-            _actionQueueManager?.AddCommands(actionScript);
-        }
-        catch (Exception ex)
-        {
-            _errorCount++;
-            _logger.LogError(ex, "添加动作指令失败: {ActionScript}, 错误计数: {ErrorCount}/{MaxErrorCount}",
-                actionScript, _errorCount, _maxErrorCount);
-
-            // 如果错误次数超过阈值，停止环境
-            if (_errorCount >= _maxErrorCount)
-            {
-                _logger.LogError("错误次数达到上限 {MaxErrorCount}，自动停止AI环境", _maxErrorCount);
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await StopAsync();
-                    }
-                    catch (Exception stopEx)
-                    {
-                        _logger.LogError(stopEx, "自动停止AI环境时发生异常");
-                    }
-                });
-            }
-        }
+        // 直接调用ActionQueueManager，让异常向上传播
+        _actionQueueManager?.AddCommands(actionScript);
     }
 
     /// <summary>
@@ -183,7 +180,7 @@ public class AIEnvironment
     /// </summary>
     public int GetErrorCount()
     {
-        return _errorCount;
+        return _actionQueueManager?.GetErrorCount() ?? 0;
     }
 
     /// <summary>
@@ -191,8 +188,78 @@ public class AIEnvironment
     /// </summary>
     public void ResetErrorCount()
     {
-        _errorCount = 0;
-        _logger.LogInformation("错误计数已重置");
+        _actionQueueManager?.ResetErrorCount();
+    }
+
+    /// <summary>
+    /// 启用或禁用性能统计
+    /// </summary>
+    public void EnablePerformanceStats(bool enable)
+    {
+        lock (_statsLock)
+        {
+            _enablePerformanceStats = enable;
+            if (enable)
+            {
+                // 清空之前的统计数据
+                _captureTimesMs.Clear();
+                _compressTimesMs.Clear();
+                _stateExtractionTimesMs.Clear();
+                _queueTimesMs.Clear();
+                _totalTimesMs.Clear();
+                _logger.LogInformation("性能统计已启用");
+            }
+            else
+            {
+                _logger.LogInformation("性能统计已禁用");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 获取性能统计结果
+    /// </summary>
+    public PerformanceStats GetPerformanceStats()
+    {
+        lock (_statsLock)
+        {
+            return new PerformanceStats
+            {
+                AvgCaptureTimeMs = _captureTimesMs.Count > 0 ? _captureTimesMs.Average() : 0,
+                AvgCompressTimeMs = _compressTimesMs.Count > 0 ? _compressTimesMs.Average() : 0,
+                AvgStateExtractionTimeMs = _stateExtractionTimesMs.Count > 0 ? _stateExtractionTimesMs.Average() : 0,
+                AvgQueueTimeMs = _queueTimesMs.Count > 0 ? _queueTimesMs.Average() : 0,
+                AvgTotalTimeMs = _totalTimesMs.Count > 0 ? _totalTimesMs.Average() : 0
+            };
+        }
+    }
+
+    /// <summary>
+    /// 记录性能统计数据
+    /// </summary>
+    private void RecordPerformanceStats(double captureMs, double compressMs, double stateMs, double queueMs, double totalMs)
+    {
+        if (!_enablePerformanceStats) return;
+
+        lock (_statsLock)
+        {
+            _captureTimesMs.Add(captureMs);
+            _compressTimesMs.Add(compressMs);
+            _stateExtractionTimesMs.Add(stateMs);
+            _queueTimesMs.Add(queueMs);
+            _totalTimesMs.Add(totalMs);
+
+            // 限制统计数据数量，避免内存泄漏
+            const int maxStats = 100;
+            if (_captureTimesMs.Count > maxStats)
+            {
+                _captureTimesMs.RemoveAt(0);
+                _compressTimesMs.RemoveAt(0);
+                _stateExtractionTimesMs.RemoveAt(0);
+                _queueTimesMs.RemoveAt(0);
+                _totalTimesMs.RemoveAt(0);
+            }
+        }
     }
 
     /// <summary>
@@ -228,13 +295,15 @@ public class AIEnvironment
     /// </summary>
     private void StartObservationLoop()
     {
-        var intervalMs = 1000 / _param.EnvFps;
-        
+        var baseIntervalMs = 1000 / _param.EnvFps;
+        var compensatedIntervalMs = Math.Max(1, baseIntervalMs - _param.TimeCompensationMs);
+
         _observationTask = Task.Run(async () =>
         {
             if (_param.DebugMode)
             {
-                _logger.LogDebug("开始观察循环，间隔: {IntervalMs}ms", intervalMs);
+                _logger.LogDebug("开始观察循环，基础间隔: {BaseInterval}ms, 补偿后间隔: {CompensatedInterval}ms",
+                    baseIntervalMs, compensatedIntervalMs);
             }
 
             while (!_cancellationToken.IsCancellationRequested && IsRunning)
@@ -260,7 +329,7 @@ public class AIEnvironment
 
                 try
                 {
-                    await Task.Delay(intervalMs, _cancellationToken);
+                    await Task.Delay(compensatedIntervalMs, _cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -280,23 +349,43 @@ public class AIEnvironment
     /// </summary>
     private async Task<Observation> CaptureObservationAsync()
     {
+        var totalStopwatch = Stopwatch.StartNew();
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        // 只进行一次截图
+        // 1. 截图阶段
+        var captureStopwatch = Stopwatch.StartNew();
         using var imageRegion = TaskControl.CaptureToRectArea();
+        captureStopwatch.Stop();
 
-        // 从同一个ImageRegion生成Base64和提取状态
+        // 2. 帧压缩阶段
+        var compressStopwatch = Stopwatch.StartNew();
         var frameBase64 = await _stateExtractor!.CaptureFrameFromImageRegionAsync(imageRegion);
+        compressStopwatch.Stop();
 
-        // 提取结构化状态
+        // 3. 状态提取阶段
+        var stateStopwatch = Stopwatch.StartNew();
         StructuredState? structuredState = null;
         if (_param.CollectStructuredState)
         {
             structuredState = await _stateExtractor.ExtractStructuredStateFromImageRegionAsync(imageRegion);
         }
+        stateStopwatch.Stop();
 
-        // 获取动作队列状态
+        // 4. 队列获取阶段
+        var queueStopwatch = Stopwatch.StartNew();
         var actionQueueStatus = GetActionQueueStatus();
+        queueStopwatch.Stop();
+
+        totalStopwatch.Stop();
+
+        // 记录性能统计
+        RecordPerformanceStats(
+            captureStopwatch.Elapsed.TotalMilliseconds,
+            compressStopwatch.Elapsed.TotalMilliseconds,
+            stateStopwatch.Elapsed.TotalMilliseconds,
+            queueStopwatch.Elapsed.TotalMilliseconds,
+            totalStopwatch.Elapsed.TotalMilliseconds
+        );
 
         return new Observation
         {

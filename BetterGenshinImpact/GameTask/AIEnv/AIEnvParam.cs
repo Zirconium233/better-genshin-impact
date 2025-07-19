@@ -19,6 +19,11 @@ public class AIEnvParam : BaseTaskParam
     public int EnvFps { get; set; } = 5;
 
     /// <summary>
+    /// 时间补偿（毫秒），用于补偿处理时间以达到准确的帧间隔
+    /// </summary>
+    public int TimeCompensationMs { get; set; } = 70;
+
+    /// <summary>
     /// 是否启用调试模式
     /// </summary>
     public bool DebugMode { get; set; } = false;
@@ -89,6 +94,7 @@ public class AIEnvParam : BaseTaskParam
         
         SchedulerType = config.SchedulerType;
         EnvFps = config.EnvFps;
+        TimeCompensationMs = config.TimeCompensationMs;
         DebugMode = config.DebugMode;
         CollectStructuredState = config.CollectStructuredState;
         EnableMergeActions = config.EnableMergeActions;
