@@ -25,6 +25,10 @@ public class AIEnvironment
     private readonly object _observationLock = new();
     private Observation? _latestObservation;
 
+    // 错误处理
+    private int _errorCount = 0;
+    private readonly int _maxErrorCount = 5;
+
     public bool IsRunning { get; private set; }
 
     public AIEnvironment(AIEnvParam param, CancellationToken cancellationToken)
@@ -143,7 +147,26 @@ public class AIEnvironment
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "添加动作指令失败: {ActionScript}", actionScript);
+            _errorCount++;
+            _logger.LogError(ex, "添加动作指令失败: {ActionScript}, 错误计数: {ErrorCount}/{MaxErrorCount}",
+                actionScript, _errorCount, _maxErrorCount);
+
+            // 如果错误次数超过阈值，停止环境
+            if (_errorCount >= _maxErrorCount)
+            {
+                _logger.LogError("错误次数达到上限 {MaxErrorCount}，自动停止AI环境", _maxErrorCount);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await StopAsync();
+                    }
+                    catch (Exception stopEx)
+                    {
+                        _logger.LogError(stopEx, "自动停止AI环境时发生异常");
+                    }
+                });
+            }
         }
     }
 
@@ -153,6 +176,23 @@ public class AIEnvironment
     public ActionQueueStatus GetActionQueueStatus()
     {
         return _actionQueueManager?.GetStatus() ?? new ActionQueueStatus();
+    }
+
+    /// <summary>
+    /// 获取错误计数
+    /// </summary>
+    public int GetErrorCount()
+    {
+        return _errorCount;
+    }
+
+    /// <summary>
+    /// 重置错误计数
+    /// </summary>
+    public void ResetErrorCount()
+    {
+        _errorCount = 0;
+        _logger.LogInformation("错误计数已重置");
     }
 
     /// <summary>

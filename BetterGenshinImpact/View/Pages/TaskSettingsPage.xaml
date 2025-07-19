@@ -2471,6 +2471,260 @@
             </StackPanel>
         </ui:CardExpander>
 
+        <!-- AI环境 -->
+        <ui:CardExpander Margin="0,0,0,12" ContentPadding="0" Icon="{ui:SymbolIcon Bot24}">
+            <ui:CardExpander.Header>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ui:TextBlock Grid.Row="0"
+                                  Grid.Column="0"
+                                  FontTypography="Body"
+                                  Text="AI环境"
+                                  TextWrapping="Wrap" />
+                    <ui:TextBlock Grid.Row="1"
+                                  Grid.Column="0"
+                                  Foreground="{ui:ThemeResource TextFillColorTertiaryBrush}"
+                                  TextWrapping="Wrap">
+                        AI代理环境，支持人工、LLM、脚本调度器 -
+                        <Hyperlink Command="{Binding GoToDataCollectorDocCommand}">
+                            相关信息
+                        </Hyperlink>
+                    </ui:TextBlock>
+                    <StackPanel Grid.Row="0"
+                                Grid.RowSpan="2"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                Margin="0,0,36,0">
+                        <controls:TwoStateButton Margin="0,0,8,0"
+                                                 DisableContent="停止"
+                                                 DisableCommand="{Binding SwitchAIEnvCommand}"
+                                                 EnableCommand="{Binding SwitchAIEnvCommand}"
+                                                 EnableContent="启动"
+                                                 IsChecked="{Binding SwitchAIEnvEnabled}" />
+                        <ui:Button Content="发送指令"
+                                   Command="{Binding SendUserPromptCommand}"
+                                   IsEnabled="{Binding SwitchAIEnvEnabled}"
+                                   Margin="0,0,8,0" />
+                        <ui:TextBlock Text="{Binding AiEnvStatus}"
+                                      VerticalAlignment="Center"
+                                      Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </Grid>
+            </ui:CardExpander.Header>
+            <StackPanel>
+                <Grid Margin="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 调度器类型 -->
+                    <ui:TextBlock Grid.Row="0"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="调度器类型"
+                                  VerticalAlignment="Center" />
+                    <ComboBox Grid.Row="0"
+                              Grid.Column="1"
+                              Margin="0,0,36,8"
+                              MinWidth="150"
+                              SelectedValuePath="Tag"
+                              SelectedValue="{Binding Config.AIEnvConfig.SchedulerType, Mode=TwoWay}">
+                        <ComboBoxItem Content="人工调度器" IsSelected="True" Tag="HumanScheduler" />
+                        <ComboBoxItem Content="LLM API调度器" Tag="LlmApiScheduler" />
+                        <ComboBoxItem Content="脚本调度器" Tag="ScriptScheduler" />
+                    </ComboBox>
+
+                    <!-- 环境运行频率 -->
+                    <ui:TextBlock Grid.Row="1"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="环境运行频率 (Hz)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="1"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="1"
+                                  Maximum="20"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.AIEnvConfig.EnvFps, Mode=TwoWay}" />
+
+                    <!-- API端点地址 -->
+                    <ui:TextBlock Grid.Row="2"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="API端点地址"
+                                  VerticalAlignment="Center" />
+                    <ui:TextBox Grid.Row="2"
+                                Grid.Column="1"
+                                Margin="0,0,36,8"
+                                MinWidth="300"
+                                Text="{Binding Config.AIEnvConfig.ApiEndpoint, Mode=TwoWay}"
+                                TextWrapping="Wrap" />
+
+                    <!-- 用户提示词 -->
+                    <ui:TextBlock Grid.Row="3"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="用户提示词"
+                                  VerticalAlignment="Center" />
+                    <ui:TextBox Grid.Row="3"
+                                Grid.Column="1"
+                                Margin="0,0,36,8"
+                                MinWidth="300"
+                                Text="{Binding Config.AIEnvConfig.UserPrompt, Mode=TwoWay}"
+                                TextWrapping="Wrap" />
+
+                    <!-- 截图质量 -->
+                    <ui:TextBlock Grid.Row="4"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="截图质量 (1-100)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="4"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="1"
+                                  Maximum="100"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.AIEnvConfig.ScreenshotQuality, Mode=TwoWay}" />
+
+
+
+                    <!-- 最大动作持续时间 -->
+                    <ui:TextBlock Grid.Row="5"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="最大动作持续时间 (秒)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="5"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="1"
+                                  Maximum="30"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.AIEnvConfig.MaxActionDuration, Mode=TwoWay}" />
+
+                    <!-- 错误终止次数 -->
+                    <ui:TextBlock Grid.Row="6"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="错误终止次数"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="6"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="1"
+                                  Maximum="20"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.AIEnvConfig.ErrorTerminationCount, Mode=TwoWay}" />
+
+                    <!-- 历史帧缓冲大小 -->
+                    <ui:TextBlock Grid.Row="7"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="历史帧缓冲大小"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="7"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="5"
+                                  Maximum="50"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.AIEnvConfig.ReplayBufferSize, Mode=TwoWay}" />
+
+                    <!-- 其他选项 -->
+                    <StackPanel Grid.Row="8"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="2"
+                                Orientation="Vertical"
+                                Margin="0,8,36,0">
+                        <!-- 第一行选项 -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="调试模式"
+                                             IsChecked="{Binding Config.AIEnvConfig.DebugMode, Mode=TwoWay}" />
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="收集结构化状态"
+                                             IsChecked="{Binding Config.AIEnvConfig.CollectStructuredState, Mode=TwoWay}" />
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="开启合并机制"
+                                             IsChecked="{Binding Config.AIEnvConfig.EnableMergeActions, Mode=TwoWay}" />
+                        </StackPanel>
+                        <!-- 第二行选项 -->
+                        <StackPanel Orientation="Horizontal">
+
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="启用秘境检测"
+                                             IsChecked="{Binding Config.AIEnvConfig.EnableDomainDetection, Mode=TwoWay}" />
+                            <ui:ToggleSwitch Margin="0,0,16,0"
+                                             Content="LLM退出时结束"
+                                             IsChecked="{Binding Config.AIEnvConfig.EndOnLlmExit, Mode=TwoWay}" />
+                        </StackPanel>
+
+                        <!-- 测试按钮区域 -->
+                        <StackPanel Orientation="Vertical" Margin="0,16,0,0">
+                            <!-- 第一行：核心测试 -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <ui:Button Content="执行测试"
+                                           Margin="0,0,12,0"
+                                           Padding="16,8"
+                                           Icon="{ui:SymbolIcon Play24}"
+                                           Command="{Binding RunActionTestCommand}"
+                                           ToolTip="执行一系列动作测试：走路、切人转鼠标、放技能、动作覆盖测试" />
+                                <ui:Button Content="Obs测试"
+                                           Margin="0,0,12,0"
+                                           Padding="16,8"
+                                           Icon="{ui:SymbolIcon Eye24}"
+                                           Command="{Binding RunObservationTestCommand}"
+                                           ToolTip="测试观察数据获取和格式，检查状态提取和动作队列" />
+                            </StackPanel>
+
+                            <!-- 第二行：性能和异常测试 -->
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="性能测试"
+                                           Margin="0,0,12,0"
+                                           Padding="16,8"
+                                           Icon="{ui:SymbolIcon Timer24}"
+                                           Command="{Binding RunPerformanceTestCommand}"
+                                           ToolTip="连续获取10次观察数据，统计平均执行时间" />
+                                <ui:Button Content="异常测试"
+                                           Margin="0,0,12,0"
+                                           Padding="16,8"
+                                           Icon="{ui:SymbolIcon ErrorCircle24}"
+                                           Command="{Binding RunExceptionTestCommand}"
+                                           ToolTip="测试极端输入和错误处理能力，验证环境稳定性" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </ui:CardExpander>
+
         <!--<ui:CardExpander Margin="0,0,0,12" ContentPadding="0" Icon="{ui:SymbolIcon Accessibility24}">
             <ui:CardExpander.Header>
                 <Grid>

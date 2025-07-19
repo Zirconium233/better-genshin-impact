@@ -22,7 +22,9 @@ using System.Threading.Tasks;
 using Windows.System;
 using BetterGenshinImpact.GameTask.AutoFishing;
 using BetterGenshinImpact.GameTask.Common.Element.Assets;
-
+using BetterGenshinImpact.GameTask.AIEnv;
+using BetterGenshinImpact.GameTask.AIEnv.Test;
+using Microsoft.Extensions.Logging;
 using BetterGenshinImpact.Helpers;
 using Wpf.Ui;
 using Wpf.Ui.Controls;
@@ -203,6 +205,19 @@ public partial class TaskSettingsPageViewModel : ViewModel
     private DataCollectorTask? _currentDataCollectorTask;
     private CancellationTokenSource? _dataCollectorCts;
     private KeyboardHook? _dataCollectorHotkey;
+
+    // AI环境相关属性
+    [ObservableProperty]
+    private bool _switchAIEnvEnabled;
+
+    [ObservableProperty]
+    private string _switchAIEnvButtonText = "启动AI环境";
+
+    [ObservableProperty]
+    private string _aiEnvStatus = "未启动";
+
+    private AIEnvTask? _currentAIEnvTask;
+    private CancellationTokenSource? _aiEnvCts;
 
     public TaskSettingsPageViewModel(IConfigService configService, INavigationService navigationService, TaskTriggerDispatcher taskTriggerDispatcher)
     {
@@ -840,4 +855,458 @@ public partial class TaskSettingsPageViewModel : ViewModel
     {
         await Launcher.LaunchUriAsync(new Uri("https://github.com/babalae/better-genshin-impact"));
     }
+
+    // AI环境相关命令
+    [RelayCommand]
+    private async Task OnSwitchAIEnv()
+    {
+        try
+        {
+            if (!SwitchAIEnvEnabled)
+            {
+                // 启动AI环境
+                if (!TaskContext.Instance().IsInitialized)
+                {
+                    Toast.Warning("请先启动截图器！");
+                    return;
+                }
+
+                SwitchAIEnvEnabled = true;
+                SwitchAIEnvButtonText = "停止";
+                AiEnvStatus = "启动中...";
+
+                _aiEnvCts = new CancellationTokenSource();
+                var param = new AIEnvParam();
+                _currentAIEnvTask = new AIEnvTask(param);
+
+                // 在后台运行任务
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _currentAIEnvTask.Start(_aiEnvCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        UIDispatcherHelper.Invoke(() =>
+                        {
+                            Toast.Information("AI环境任务已停止");
+                            ResetAIEnvUI();
+                        });
+                    }
+                    catch (Exception e)
+                    {
+                        UIDispatcherHelper.Invoke(() =>
+                        {
+                            Toast.Error($"AI环境任务失败: {e.Message}");
+                            ResetAIEnvUI();
+                        });
+                    }
+                });
+
+                // 启动状态监控
+                StartAIEnvStatusMonitoring();
+
+                Toast.Information("AI环境任务已启动");
+            }
+            else
+            {
+                // 停止AI环境
+                StopAIEnv();
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"操作AI环境失败: {ex.Message}");
+            ResetAIEnvUI();
+        }
+    }
+
+    [RelayCommand]
+    private void OnSendUserPrompt()
+    {
+        if (_currentAIEnvTask == null || !SwitchAIEnvEnabled)
+        {
+            Toast.Warning("AI环境未启动");
+            return;
+        }
+
+        try
+        {
+            // 获取用户输入的提示词
+            var prompt = Config.AIEnvConfig.UserPrompt;
+            if (string.IsNullOrWhiteSpace(prompt))
+            {
+                Toast.Warning("请先设置用户提示词");
+                return;
+            }
+
+            _currentAIEnvTask.SendUserPrompt(prompt);
+            Toast.Information($"已发送用户指令: {prompt}");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"发送用户指令失败: {ex.Message}");
+        }
+    }
+
+    private void StopAIEnv()
+    {
+        try
+        {
+            _aiEnvCts?.Cancel();
+            _currentAIEnvTask?.Stop();
+            ResetAIEnvUI();
+            Toast.Information("AI环境已停止");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"停止AI环境失败: {ex.Message}");
+        }
+    }
+
+    private void ResetAIEnvUI()
+    {
+        SwitchAIEnvEnabled = false;
+        SwitchAIEnvButtonText = "启动AI环境";
+        AiEnvStatus = "未启动";
+    }
+
+    private void StartAIEnvStatusMonitoring()
+    {
+        // 每秒检查一次状态
+        var timer = new System.Timers.Timer(1000);
+        timer.Elapsed += (sender, e) =>
+        {
+            if (_currentAIEnvTask == null || _aiEnvCts?.IsCancellationRequested == true)
+            {
+                timer.Stop();
+                return;
+            }
+
+            UIDispatcherHelper.Invoke(() =>
+            {
+                try
+                {
+                    var status = _currentAIEnvTask.GetStatus();
+                    AiEnvStatus = status;
+                }
+                catch (Exception ex)
+                {
+                    AiEnvStatus = $"状态获取失败: {ex.Message}";
+                }
+            });
+        };
+        timer.Start();
+    }
+
+    #region AI环境测试命令
+
+    [RelayCommand]
+    private async Task RunActionTestAsync()
+    {
+        try
+        {
+            Toast.Information("开始执行动作测试...");
+
+            if (_currentAIEnvTask?.GetAIEnvironment() == null)
+            {
+                Toast.Warning("AI环境未启动，请先启动AI环境");
+                return;
+            }
+
+            var aiEnv = _currentAIEnvTask.GetAIEnvironment()!;
+            var logger = App.GetLogger<TaskSettingsPageViewModel>();
+
+            // 第一组：正常走路测试
+            logger.LogInformation("=== 第一组：正常走路测试 ===");
+            Toast.Information("执行第一组：正常走路测试");
+            aiEnv.AddCommands("w(2.0)");
+            await Task.Delay(2500);
+            aiEnv.AddCommands("a(1.5)");
+            await Task.Delay(2000);
+            aiEnv.AddCommands("s(1.0)");
+            await Task.Delay(1500);
+            aiEnv.AddCommands("d(1.0)");
+            await Task.Delay(1500);
+
+            // 第二组：切人和转鼠标测试
+            logger.LogInformation("=== 第二组：切人和转鼠标测试 ===");
+            Toast.Information("执行第二组：切人和转鼠标测试");
+            aiEnv.AddCommands("sw(1)");
+            await Task.Delay(1000);
+            aiEnv.AddCommands("sw(2)");
+            await Task.Delay(1000);
+            aiEnv.AddCommands("moveby(100,50)");
+            await Task.Delay(500);
+            aiEnv.AddCommands("moveby(-100,-50)");
+            await Task.Delay(500);
+
+            // 第三组：放技能测试
+            logger.LogInformation("=== 第三组：放技能测试 ===");
+            Toast.Information("执行第三组：放技能测试");
+            aiEnv.AddCommands("e");
+            await Task.Delay(1000);
+            aiEnv.AddCommands("q");
+            await Task.Delay(1000);
+            aiEnv.AddCommands("attack(0.5)");
+            await Task.Delay(1000);
+            aiEnv.AddCommands("charge(1.0)");
+            await Task.Delay(1500);
+
+            // 第四组：动作组覆盖测试
+            logger.LogInformation("=== 第四组：动作组覆盖测试 ===");
+            Toast.Information("执行第四组：动作组覆盖测试");
+
+            // 先发送长时间动作
+            aiEnv.AddCommands("w(5)&a(2),e");
+            logger.LogInformation("已发送: w(5)&a(2),e");
+
+            // 等待1秒后发送覆盖动作
+            await Task.Delay(1000);
+            aiEnv.AddCommands("s(2)&w(1),e(hold)");
+            logger.LogInformation("已发送覆盖动作: s(2)&w(1),e(hold)");
+
+            // 等待动作完成
+            await Task.Delay(3000);
+
+            Toast.Success("动作测试完成！请查看日志了解详细执行情况");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"执行动作测试时发生错误: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task RunObservationTestAsync()
+    {
+        try
+        {
+            Toast.Information("开始Obs测试...");
+
+            if (_currentAIEnvTask?.GetAIEnvironment() == null)
+            {
+                Toast.Warning("AI环境未启动，请先启动AI环境");
+                return;
+            }
+
+            var aiEnv = _currentAIEnvTask.GetAIEnvironment()!;
+            var logger = App.GetLogger<TaskSettingsPageViewModel>();
+
+            // 获取观察数据
+            var observation = aiEnv.GetLatestObservation();
+            if (observation == null)
+            {
+                Toast.Warning("无法获取观察数据，请确保AI环境正在运行");
+                return;
+            }
+
+            // 解析图片信息（不打印base64）
+            var frameInfo = "无图片数据";
+            if (!string.IsNullOrEmpty(observation.FrameBase64))
+            {
+                try
+                {
+                    var imageBytes = Convert.FromBase64String(observation.FrameBase64);
+                    frameInfo = $"图片大小: {imageBytes.Length} bytes, Base64长度: {observation.FrameBase64.Length} chars";
+                }
+                catch
+                {
+                    frameInfo = "图片数据格式错误";
+                }
+            }
+
+            // 转换为JSON格式输出（不包含base64）
+            var obsInfo = new
+            {
+                timestamp_ms = observation.TimestampMs,
+                frame_info = frameInfo,
+                structured_state = observation.StructuredState,
+                action_queue_status = observation.ActionQueueStatus
+            };
+
+            var json = System.Text.Json.JsonSerializer.Serialize(obsInfo, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            logger.LogInformation("=== 观察数据格式测试 ===");
+            logger.LogInformation("观察数据JSON格式:\n{ObsJson}", json);
+
+            // 添加几个动作组再观察
+            Toast.Information("添加动作组并观察队列变化...");
+            aiEnv.AddCommands("w(2)");
+            aiEnv.AddCommands("a(1)");
+            aiEnv.AddCommands("e");
+
+            await Task.Delay(500); // 等待队列更新
+
+            var observation2 = aiEnv.GetLatestObservation();
+            if (observation2 != null)
+            {
+                var obsInfo2 = new
+                {
+                    timestamp_ms = observation2.TimestampMs,
+                    action_queue_status = observation2.ActionQueueStatus
+                };
+
+                var json2 = System.Text.Json.JsonSerializer.Serialize(obsInfo2, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+
+                logger.LogInformation("=== 添加动作后的队列状态 ===");
+                logger.LogInformation("动作队列状态:\n{QueueJson}", json2);
+            }
+
+            Toast.Success("Obs测试完成！请查看日志了解观察数据格式");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"执行Obs测试时发生错误: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task RunPerformanceTestAsync()
+    {
+        try
+        {
+            Toast.Information("开始性能测试...");
+
+            if (_currentAIEnvTask?.GetAIEnvironment() == null)
+            {
+                Toast.Warning("AI环境未启动，请先启动AI环境");
+                return;
+            }
+
+            var aiEnv = _currentAIEnvTask.GetAIEnvironment()!;
+            var logger = App.GetLogger<TaskSettingsPageViewModel>();
+            var times = new List<double>();
+
+            logger.LogInformation("=== 性能测试：连续获取10次观察数据 ===");
+
+            for (int i = 0; i < 10; i++)
+            {
+                var stopwatch = Stopwatch.StartNew();
+                var observation = aiEnv.GetLatestObservation();
+                stopwatch.Stop();
+
+                var elapsedMs = stopwatch.Elapsed.TotalMilliseconds;
+                times.Add(elapsedMs);
+
+                logger.LogInformation("第{Index}次获取观察数据耗时: {ElapsedMs:F2}ms", i + 1, elapsedMs);
+
+                // 短暂延迟避免过于频繁
+                await Task.Delay(100);
+            }
+
+            var avgTime = times.Average();
+            var minTime = times.Min();
+            var maxTime = times.Max();
+
+            logger.LogInformation("=== 性能测试结果 ===");
+            logger.LogInformation("平均耗时: {AvgTime:F2}ms", avgTime);
+            logger.LogInformation("最小耗时: {MinTime:F2}ms", minTime);
+            logger.LogInformation("最大耗时: {MaxTime:F2}ms", maxTime);
+            logger.LogInformation("理论最大FPS: {MaxFps:F2}", 1000.0 / avgTime);
+
+            Toast.Success($"性能测试完成！平均耗时: {avgTime:F2}ms");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"执行性能测试时发生错误: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task RunExceptionTestAsync()
+    {
+        try
+        {
+            Toast.Information("开始异常测试...");
+
+            if (_currentAIEnvTask?.GetAIEnvironment() == null)
+            {
+                Toast.Warning("AI环境未启动，请先启动AI环境");
+                return;
+            }
+
+            var aiEnv = _currentAIEnvTask.GetAIEnvironment()!;
+            var logger = App.GetLogger<TaskSettingsPageViewModel>();
+            var errorCount = 0;
+
+            logger.LogInformation("=== 异常测试：极端输入和错误处理 ===");
+
+            // 测试各种不合法输入
+            var invalidInputs = new[]
+            {
+                "", // 空字符串
+                "   ", // 空白字符
+                "invalid_action", // 无效动作
+                "w()", // 缺少参数
+                "w(-1)", // 负数参数
+                "w(999999)", // 超大参数
+                "w(abc)", // 非数字参数
+                "w(1)&w(2)&w(3)&w(4)&w(5)", // 过多同时动作
+                "w(1),a(2),s(3),d(4),e,q,attack(1),charge(2),sw(1),sw(2)", // 过长指令
+                "w(1)&", // 语法错误
+                ",w(1)", // 语法错误
+                "w(1),,a(2)", // 双逗号
+                "w(1)&&a(2)" // 双&符号
+            };
+
+            foreach (var input in invalidInputs)
+            {
+                try
+                {
+                    logger.LogInformation("测试输入: '{Input}'", input ?? "null");
+                    if (input != null)
+                    {
+                        aiEnv.AddCommands(input);
+                    }
+                    await Task.Delay(100);
+                }
+                catch (Exception ex)
+                {
+                    errorCount++;
+                    logger.LogWarning("输入 '{Input}' 引发异常: {Error}", input ?? "null", ex.Message);
+                }
+            }
+
+            logger.LogInformation("=== 异常测试结果 ===");
+            logger.LogInformation("总测试输入: {TotalInputs}", invalidInputs.Length);
+            logger.LogInformation("引发异常数量: {ErrorCount}", errorCount);
+
+            // 检查环境是否仍在运行和错误计数
+            var isStillRunning = aiEnv.IsRunning;
+            var envErrorCount = aiEnv.GetErrorCount();
+            logger.LogInformation("环境运行状态: {IsRunning}", isStillRunning ? "正常运行" : "已停止");
+            logger.LogInformation("环境内部错误计数: {EnvErrorCount}", envErrorCount);
+
+            if (envErrorCount >= 5)
+            {
+                logger.LogWarning("环境内部错误数量达到{ErrorCount}次，检查环境是否应该终止", envErrorCount);
+                if (isStillRunning)
+                {
+                    Toast.Warning($"环境在{envErrorCount}次内部错误后仍在运行，可能需要改进错误处理机制");
+                }
+                else
+                {
+                    Toast.Information($"环境在{envErrorCount}次内部错误后正确终止运行");
+                }
+            }
+            else
+            {
+                Toast.Success($"异常测试完成！环境正确处理了{errorCount}个异常输入，内部错误计数: {envErrorCount}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"执行异常测试时发生错误: {ex.Message}");
+        }
+    }
+
+    #endregion
 }

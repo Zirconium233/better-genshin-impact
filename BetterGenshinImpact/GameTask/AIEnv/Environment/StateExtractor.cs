@@ -77,7 +77,7 @@ public class StateExtractor
             var imageRegion = TaskControl.CaptureToRectArea();
             try
             {
-                using var mat = imageRegion.SrcMat;
+                var mat = imageRegion.SrcMat;
 
                 // 压缩图像以减少数据传输量
                 var config = TaskContext.Instance().Config.AIEnvConfig;
@@ -116,7 +116,7 @@ public class StateExtractor
         _stopwatch.Restart();
         try
         {
-            using var imageRegion = TaskControl.CaptureToRectArea();
+            var imageRegion = TaskControl.CaptureToRectArea();
 
             var state = new AIEnv.Model.StructuredState();
 
@@ -182,7 +182,7 @@ public class StateExtractor
         _stopwatch.Restart();
         try
         {
-            using var mat = imageRegion.SrcMat;
+            var mat = imageRegion.SrcMat;
 
             // 压缩图像以减少数据传输量
             var config = TaskContext.Instance().Config.AIEnvConfig;
