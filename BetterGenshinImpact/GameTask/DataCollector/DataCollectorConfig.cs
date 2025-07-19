@@ -136,6 +136,12 @@ public partial class DataCollectorConfig : ObservableObject
     /// </summary>
     [ObservableProperty]
     private int _gameContextCacheIntervalMs = 1000; // 默认1秒缓存间隔
+
+    /// <summary>
+    /// 时间补偿 (毫秒) - 用于调整时间偏移
+    /// </summary>
+    [ObservableProperty]
+    private int _timeCompensationMs = 70; // 默认70
 }
 
 /// <summary>

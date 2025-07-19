@@ -74,6 +74,11 @@ public class DataCollectorParam : BaseTaskParam
     /// </summary>
     public int GameContextCacheIntervalMs { get; set; } = 1000;
 
+    /// <summary>
+    /// 时间补偿 (毫秒) - 用于调整时间偏移
+    /// </summary>
+    public int TimeCompensationMs { get; set; } = 70;
+
     public DataCollectorParam() : base()
     {
     }

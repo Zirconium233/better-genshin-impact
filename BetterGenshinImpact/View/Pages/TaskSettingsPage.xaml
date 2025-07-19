@@ -2308,6 +2308,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -2392,24 +2393,39 @@
                                   ValidationMode="InvalidInputOverwritten"
                                   Value="{Binding Config.DataCollectorConfig.GameContextCacheIntervalMs, Mode=TwoWay}" />
 
-                    <!-- 自动触发器 -->
+                    <!-- 时间补偿 -->
                     <ui:TextBlock Grid.Row="5"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="时间补偿 (毫秒)"
+                                  VerticalAlignment="Center" />
+                    <ui:NumberBox Grid.Row="5"
+                                  Grid.Column="1"
+                                  Margin="0,0,36,8"
+                                  MinWidth="120"
+                                  Minimum="-100"
+                                  Maximum="100"
+                                  ValidationMode="InvalidInputOverwritten"
+                                  Value="{Binding Config.DataCollectorConfig.TimeCompensationMs, Mode=TwoWay}" />
+
+                    <!-- 自动触发器 -->
+                    <ui:TextBlock Grid.Row="6"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="启用自动触发器"
                                   VerticalAlignment="Center" />
-                    <ui:ToggleSwitch Grid.Row="5"
+                    <ui:ToggleSwitch Grid.Row="6"
                                      Grid.Column="1"
                                      Margin="0,0,36,8"
                                      IsChecked="{Binding Config.DataCollectorConfig.AutoTriggerEnabled, Mode=TwoWay}" />
 
                     <!-- 开始触发器类型 -->
-                    <ui:TextBlock Grid.Row="6"
+                    <ui:TextBlock Grid.Row="7"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="开始触发器"
                                   VerticalAlignment="Center" />
-                    <ComboBox Grid.Row="6"
+                    <ComboBox Grid.Row="7"
                               Grid.Column="1"
                               Margin="0,0,36,8"
                               MinWidth="150"
@@ -2419,12 +2435,12 @@
                               SelectedValue="{Binding Config.DataCollectorConfig.StartTriggerType, Mode=TwoWay}" />
 
                     <!-- 结束触发器类型 -->
-                    <ui:TextBlock Grid.Row="7"
+                    <ui:TextBlock Grid.Row="8"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
                                   Text="结束触发器"
                                   VerticalAlignment="Center" />
-                    <ComboBox Grid.Row="7"
+                    <ComboBox Grid.Row="8"
                               Grid.Column="1"
                               Margin="0,0,36,8"
                               MinWidth="150"
@@ -2434,7 +2450,7 @@
                               SelectedValue="{Binding Config.DataCollectorConfig.EndTriggerType, Mode=TwoWay}" />
 
                     <!-- 其他选项 -->
-                    <StackPanel Grid.Row="8"
+                    <StackPanel Grid.Row="9"
                                 Grid.Column="0"
                                 Grid.ColumnSpan="2"
                                 Orientation="Vertical"

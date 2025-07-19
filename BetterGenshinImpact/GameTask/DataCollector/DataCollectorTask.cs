@@ -801,26 +801,29 @@ public class DataCollectorTask : ISoloTask
     }
 
     /// <summary>
-    /// 开始数据采集 - 使用高精度Task-based定时器
+    /// 开始数据采集 - 使用类似AIEnv的高精度定时器
     /// </summary>
     private void StartDataCollection()
     {
-        var collectionInterval = 1000 / _taskParam.CollectionFps; // 毫秒
+        var baseIntervalMs = 1000 / _taskParam.CollectionFps;
+        var compensatedIntervalMs = Math.Max(1, baseIntervalMs - _taskParam.TimeCompensationMs);
 
         _collectionCts = new CancellationTokenSource();
-        _collectionTask = Task.Run(async () => await CollectionLoop(collectionInterval, _collectionCts.Token));
+        _collectionTask = Task.Run(async () => await CollectionLoop(compensatedIntervalMs, _collectionCts.Token));
 
-        _logger.LogInformation("数据采集已启动, FPS: {Fps}, 间隔: {Interval}ms",
-            _taskParam.CollectionFps, collectionInterval);
+        _logger.LogInformation("数据采集已启动, FPS: {Fps}, 基础间隔: {BaseInterval}ms, 补偿后间隔: {CompensatedInterval}ms",
+            _taskParam.CollectionFps, baseIntervalMs, compensatedIntervalMs);
     }
 
     /// <summary>
-    /// 高精度采集循环 - 使用Stopwatch确保时间精度
+    /// 高精度采集循环 - 参考AIEnv的简化实现
     /// </summary>
     private async Task CollectionLoop(int intervalMs, CancellationToken cancellationToken)
     {
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var nextFrameTime = 0L;
+        if (_taskParam.DebugMode)
+        {
+            _logger.LogDebug("开始数据采集循环，间隔: {Interval}ms", intervalMs);
+        }
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -833,35 +836,32 @@ public class DataCollectorTask : ISoloTask
                         return;
                 }
 
-                // 采集帧数据
-                CollectFrame();
+                // 采集帧数据 - 使用类似AIEnv的逻辑
+                CollectFrameOptimized();
 
-                // 计算下一帧时间
-                nextFrameTime += intervalMs;
-                var currentTime = stopwatch.ElapsedMilliseconds;
-                var waitTime = nextFrameTime - currentTime;
+                if (_taskParam.DebugMode)
+                {
+                    _logger.LogDebug("完成帧采集，帧索引: {FrameIndex}", _frameIndex - 1);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "采集帧数据时发生异常");
+            }
 
-                if (waitTime > 0)
-                {
-                    // 使用高精度延迟
-                    await Task.Delay((int)waitTime, cancellationToken);
-                }
-                else if (waitTime < -intervalMs)
-                {
-                    // 如果延迟超过一个帧间隔，重置时间基准
-                    _logger.LogWarning("帧采集延迟过大: {Delay}ms, 重置时间基准", -waitTime);
-                    nextFrameTime = stopwatch.ElapsedMilliseconds;
-                }
+            try
+            {
+                await Task.Delay(intervalMs, cancellationToken);
             }
             catch (OperationCanceledException)
             {
                 break;
             }
-            catch (Exception e)
-            {
-                _logger.LogWarning(e, "采集循环中发生异常");
-                await Task.Delay(intervalMs, cancellationToken);
-            }
+        }
+
+        if (_taskParam.DebugMode)
+        {
+            _logger.LogDebug("数据采集循环已结束");
         }
     }
 
@@ -1000,9 +1000,9 @@ private bool CheckDomainStart()
     }
 
     /// <summary>
-    /// 采集单帧数据
+    /// 采集单帧数据 - 参考AIEnv实现
     /// </summary>
-    private void CollectFrame()
+    private void CollectFrameOptimized()
     {
         // 检查是否正在采集
         lock (_stateLock)
@@ -1011,8 +1011,8 @@ private bool CheckDomainStart()
                 return;
         }
 
-        // 1. 立即记录截图时间戳
-        var screenshotTimestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var totalStopwatch = Stopwatch.StartNew();
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         try
         {
@@ -1022,13 +1022,25 @@ private bool CheckDomainStart()
             // 定期清理超时的待回写事件（每100帧清理一次）
             if (_frameIndex % 100 == 0)
             {
-                _inputMonitor.CleanupTimeoutPendingActions(screenshotTimestamp);
+                _inputMonitor.CleanupTimeoutPendingActions(timestamp);
             }
 
-            // 2. 立即截图
+            // 1. 截图阶段 - 参考AIEnv实现
+            var captureStopwatch = Stopwatch.StartNew();
             using var imageRegion = TaskControl.CaptureToRectArea();
+            captureStopwatch.Stop();
 
-            // 3. 生成脚本格式的动作 - 基于action_report.md的设计
+            // 2. 状态提取阶段 - 参考AIEnv实现
+            var stateStopwatch = Stopwatch.StartNew();
+            StructuredState? structuredState = null;
+            if (_config.CollectStructuredState)
+            {
+                structuredState = _stateExtractor.ExtractStructuredState(imageRegion);
+            }
+            stateStopwatch.Stop();
+
+            // 4. 生成脚本格式的动作 - 基于action_report.md的设计
+            var actionStopwatch = Stopwatch.StartNew();
             var actionScript = string.Empty;
 
             try
@@ -1040,7 +1052,7 @@ private bool CheckDomainStart()
                 if (!_stateExtractor.ValidateActionScript(actionScript))
                 {
                     // 计算实际的等待时间，基于上一帧的时间差
-                    var actualWaitTime = CalculateActualWaitTime(screenshotTimestamp, frameInterval);
+                    var actualWaitTime = CalculateActualWaitTime(timestamp, frameInterval);
                     actionScript = $"wait({actualWaitTime:F1})";
                 }
 
@@ -1054,7 +1066,7 @@ private bool CheckDomainStart()
             {
                 _logger.LogDebug(e, "生成动作脚本失败");
                 // 计算实际的等待时间，基于上一帧的时间差
-                var actualWaitTime = CalculateActualWaitTime(screenshotTimestamp, 1000 / _taskParam.CollectionFps);
+                var actualWaitTime = CalculateActualWaitTime(timestamp, 1000 / _taskParam.CollectionFps);
                 actionScript = $"wait({actualWaitTime:F1})";
             }
 
@@ -1062,42 +1074,46 @@ private bool CheckDomainStart()
             if (actionScript.StartsWith("wait") && !_taskParam.CollectNoActionFrames)
             {
                 // 检查是否需要采集无动作帧
-                if (screenshotTimestamp - _lastNoActionFrameTime < _taskParam.NoActionFrameInterval)
+                if (timestamp - _lastNoActionFrameTime < _taskParam.NoActionFrameInterval)
                 {
                     return; // 跳过此帧
                 }
-                _lastNoActionFrameTime = screenshotTimestamp;
+                _lastNoActionFrameTime = timestamp;
             }
+            actionStopwatch.Stop();
 
-            // 提取结构化状态（可选，根据配置决定）
-            StructuredState? structuredState = null;
-            if (_config.CollectStructuredState)
+            // 更新游戏上下文缓存，用于菜单状态检查
+            if (structuredState != null)
             {
-                var extractStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-                // 根据配置选择提取选项，默认只提取基本信息
-                // 队伍信息始终提取（用于菜单检测），不再需要配置选项
-                structuredState = _stateExtractor.ExtractStructuredState(imageRegion);
-                var extractTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - extractStartTime;
-
-                // 更新游戏上下文缓存，用于菜单状态检查
                 _lastGameContext = structuredState.GameContext;
 
                 // 检查处理时间是否过长
                 var frameInterval = 1000 / _taskParam.CollectionFps;
-                if (extractTime > frameInterval * 0.8)
+                if (stateStopwatch.Elapsed.TotalMilliseconds > frameInterval * 0.8)
                 {
                     _logger.LogWarning("状态提取耗时过长: {ExtractTime}ms, 帧间隔: {FrameInterval}ms, 建议禁用部分检测功能",
-                        extractTime, frameInterval);
+                        stateStopwatch.Elapsed.TotalMilliseconds, frameInterval);
 
                     // 如果处理时间超过帧间隔的80%，自动停止采集
-                    if (extractTime > frameInterval)
+                    if (stateStopwatch.Elapsed.TotalMilliseconds > frameInterval)
                     {
                         _logger.LogError("状态提取耗时超过帧间隔，自动停止数据采集");
                         StopCollectionManually();
                         return;
                     }
                 }
+            }
+
+            totalStopwatch.Stop();
+
+            // 记录性能统计 - 参考AIEnv实现
+            if (_taskParam.DebugMode && _frameIndex % 10 == 0) // 每10帧记录一次性能统计
+            {
+                _logger.LogDebug("帧采集性能统计 - 截图: {Capture}ms, 状态提取: {State}ms, 动作生成: {Action}ms, 总计: {Total}ms",
+                    captureStopwatch.Elapsed.TotalMilliseconds,
+                    stateStopwatch.Elapsed.TotalMilliseconds,
+                    actionStopwatch.Elapsed.TotalMilliseconds,
+                    totalStopwatch.Elapsed.TotalMilliseconds);
             }
 
             // 保存截图
@@ -1108,7 +1124,7 @@ private bool CheckDomainStart()
             {
                 SessionId = _taskParam.SessionId,
                 FrameIndex = _frameIndex++,
-                TimeOffsetMs = screenshotTimestamp - _sessionStartTime,
+                TimeOffsetMs = timestamp - _sessionStartTime,
                 FramePath = framePath,
                 ActionScript = actionScript, // 脚本格式的动作
                 StructuredState = structuredState ?? new StructuredState(),
