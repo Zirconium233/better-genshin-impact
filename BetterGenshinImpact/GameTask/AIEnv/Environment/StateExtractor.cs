@@ -139,7 +139,7 @@ public class StateExtractor
             {
                 InMenu = inMenu,
                 InCombat = false, // 硬编码为false，scheduler应手动处理或移除此字段
-                InDomain = false, // 硬编码为false，scheduler应手动处理或移除此字段
+                InDomain = !Bv.IsInMainUi(imageRegion),
                 IsCurrentLowHp = isCurrentLowHp
             };
 

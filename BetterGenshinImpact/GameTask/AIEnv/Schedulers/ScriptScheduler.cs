@@ -265,9 +265,9 @@ public class ScriptScheduler : IAgentScheduler
 
             if (scriptPath == "auto")
             {
-                // 自动选择脚本逻辑
+                // 自动选择脚本逻辑 - Placeholder 实现
                 _logger.LogInformation("使用自动选择脚本模式");
-                var autoScript = "w(0.2),attack(2),e,q,charge(0.5)"; // 简单的自动战斗序列
+                var autoScript = "w(0.2),attack(1),e,q,charge(0.5)"; // 简单的自动战斗序列
                 _env?.AddCommands(autoScript);
                 _logger.LogInformation("提交自动战斗脚本: {Script}", autoScript);
                 return;
@@ -538,7 +538,7 @@ public class ScriptTranslator
                     "d" => "d(0.1)",
                     "e" => "e",
                     "q" => "q",
-                    "attack" => "attack(2)",
+                    "attack" => "attack(1)",
                     "jump" => "jump",
                     "charge" => "charge(1.0)",
                     _ => action // 保持原样
@@ -573,7 +573,7 @@ public class ScriptTranslator
         _logger.LogInformation("输入脚本长度: {Length}", keyMouseScript.Length);
         
         // Placeholder: 需要解析JSON格式的键鼠脚本
-        return "w(0.5),attack(2),w(0.5)";
+        return "w(0.5),attack(1),w(0.5)";
     }
 }
 
