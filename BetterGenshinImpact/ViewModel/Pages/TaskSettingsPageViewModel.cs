@@ -41,15 +41,12 @@ using BetterGenshinImpact.GameTask.AutoStygianOnslaught;
 using BetterGenshinImpact.View.Windows;
 using BetterGenshinImpact.GameTask.GetGridIcons;
 using BetterGenshinImpact.GameTask.Model.GameUI;
-<<<<<<< HEAD
 using BetterGenshinImpact.GameTask.DataCollector;
 using BetterGenshinImpact.Model;
 using System.Windows.Forms;
 using Fischless.HotkeyCapture;
-=======
 using BetterGenshinImpact.GameTask.UseRedeemCode;
 using TextBox = Wpf.Ui.Controls.TextBox;
->>>>>>> b74e7c4131e310f19ef7fffccd9aa0a27f8b57b9
 
 namespace BetterGenshinImpact.ViewModel.Pages;
 
