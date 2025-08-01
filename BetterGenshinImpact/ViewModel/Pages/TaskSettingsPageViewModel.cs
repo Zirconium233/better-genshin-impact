@@ -23,6 +23,7 @@ using Windows.System;
 using BetterGenshinImpact.GameTask.AutoFishing;
 using BetterGenshinImpact.GameTask.Common.Element.Assets;
 using BetterGenshinImpact.GameTask.AIEnv;
+using BetterGenshinImpact.GameTask.AIEnv.Schedulers;
 using BetterGenshinImpact.GameTask.AIEnv.Environment;
 using Microsoft.Extensions.Logging;
 using BetterGenshinImpact.Helpers;
@@ -999,6 +1000,146 @@ public partial class TaskSettingsPageViewModel : ViewModel
         };
         timer.Start();
     }
+
+    #region LLM调度器测试方法
+
+    [RelayCommand]
+    private async Task OnTestLlmObsAndPrompt()
+    {
+        // 检查调度器类型
+        if (Config.AIEnvConfig.SchedulerType != "LlmApiScheduler")
+        {
+            Toast.Warning("请先选择LLM API调度器");
+            return;
+        }
+
+        if (_currentAIEnvTask == null || !SwitchAIEnvEnabled)
+        {
+            Toast.Warning("AI环境未启动");
+            return;
+        }
+
+        try
+        {
+            var scheduler = _currentAIEnvTask.GetScheduler() as LlmApiScheduler;
+            if (scheduler == null)
+            {
+                Toast.Warning("当前调度器不是LLM调度器");
+                return;
+            }
+
+            await scheduler.TestObsAndPrompt();
+            Toast.Information("Obs和Prompt测试完成，请查看日志");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"Obs和Prompt测试失败: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task OnTestLlmTriggers()
+    {
+        // 检查调度器类型
+        if (Config.AIEnvConfig.SchedulerType != "LlmApiScheduler")
+        {
+            Toast.Warning("请先选择LLM API调度器");
+            return;
+        }
+
+        if (_currentAIEnvTask == null || !SwitchAIEnvEnabled)
+        {
+            Toast.Warning("AI环境未启动");
+            return;
+        }
+
+        try
+        {
+            var scheduler = _currentAIEnvTask.GetScheduler() as LlmApiScheduler;
+            if (scheduler == null)
+            {
+                Toast.Warning("当前调度器不是LLM调度器");
+                return;
+            }
+
+            await scheduler.TestTriggers();
+            Toast.Information("触发器测试完成，请查看日志");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"触发器测试失败: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task OnTestLlmApiCall()
+    {
+        // 检查调度器类型
+        if (Config.AIEnvConfig.SchedulerType != "LlmApiScheduler")
+        {
+            Toast.Warning("请先选择LLM API调度器");
+            return;
+        }
+
+        if (_currentAIEnvTask == null || !SwitchAIEnvEnabled)
+        {
+            Toast.Warning("AI环境未启动");
+            return;
+        }
+
+        try
+        {
+            var scheduler = _currentAIEnvTask.GetScheduler() as LlmApiScheduler;
+            if (scheduler == null)
+            {
+                Toast.Warning("当前调度器不是LLM调度器");
+                return;
+            }
+
+            await scheduler.TestApiCall();
+            Toast.Information("API调用测试完成，请查看日志");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"API调用测试失败: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task OnTestLlmComplete()
+    {
+        // 检查调度器类型
+        if (Config.AIEnvConfig.SchedulerType != "LlmApiScheduler")
+        {
+            Toast.Warning("请先选择LLM API调度器");
+            return;
+        }
+
+        if (_currentAIEnvTask == null || !SwitchAIEnvEnabled)
+        {
+            Toast.Warning("AI环境未启动");
+            return;
+        }
+
+        try
+        {
+            var scheduler = _currentAIEnvTask.GetScheduler() as LlmApiScheduler;
+            if (scheduler == null)
+            {
+                Toast.Warning("当前调度器不是LLM调度器");
+                return;
+            }
+
+            await scheduler.TestComplete();
+            Toast.Information("完整测试完成，请查看日志");
+        }
+        catch (Exception ex)
+        {
+            Toast.Error($"完整测试失败: {ex.Message}");
+        }
+    }
+
+    #endregion
 
     #region AI环境测试命令
 

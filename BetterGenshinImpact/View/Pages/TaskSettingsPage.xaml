@@ -2547,6 +2547,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -2613,11 +2614,11 @@
                                 Text="{Binding Config.AIEnvConfig.ApiEndpoint, Mode=TwoWay}"
                                 TextWrapping="Wrap" />
 
-                    <!-- 用户提示词 -->
+                    <!-- 默认Prompt -->
                     <ui:TextBlock Grid.Row="4"
                                   Grid.Column="0"
                                   Margin="0,0,0,8"
-                                  Text="用户提示词"
+                                  Text="默认Prompt"
                                   VerticalAlignment="Center" />
                     <ui:TextBox Grid.Row="4"
                                 Grid.Column="1"
@@ -2688,8 +2689,25 @@
                                   ValidationMode="InvalidInputOverwritten"
                                   Value="{Binding Config.AIEnvConfig.ReplayBufferSize, Mode=TwoWay}" />
 
+                    <!-- 结束触发器类型 -->
+                    <ui:TextBlock Grid.Row="9"
+                                  Grid.Column="0"
+                                  Margin="0,0,0,8"
+                                  Text="结束触发器类型"
+                                  VerticalAlignment="Center" />
+                    <ComboBox Grid.Row="9"
+                              Grid.Column="1"
+                              Margin="0,0,36,8"
+                              MinWidth="150"
+                              SelectedValuePath="Tag"
+                              SelectedValue="{Binding Config.AIEnvConfig.EndTriggerType, Mode=TwoWay}">
+                        <ComboBoxItem Content="LLM退出指令" IsSelected="True" Tag="LlmExit" />
+                        <ComboBoxItem Content="环境异常" Tag="EnvException" />
+                        <ComboBoxItem Content="LLM退出或环境异常" Tag="LlmExit,EnvException" />
+                    </ComboBox>
+
                     <!-- 其他选项 -->
-                    <StackPanel Grid.Row="9"
+                    <StackPanel Grid.Row="10"
                                 Grid.Column="0"
                                 Grid.ColumnSpan="2"
                                 Orientation="Vertical"
@@ -2736,7 +2754,7 @@
                             </StackPanel>
 
                             <!-- 第二行：性能和异常测试 -->
-                            <StackPanel Orientation="Horizontal">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                 <ui:Button Content="性能测试"
                                            Margin="0,0,12,0"
                                            Padding="16,8"
@@ -2749,6 +2767,38 @@
                                            Icon="{ui:SymbolIcon ErrorCircle24}"
                                            Command="{Binding RunExceptionTestCommand}"
                                            ToolTip="测试极端输入和错误处理能力，验证环境稳定性" />
+                            </StackPanel>
+
+                            <!-- 第三行：LLM调度器测试 -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <ui:Button Content="Obs&amp;Prompt测试"
+                                           Margin="0,0,12,0"
+                                           Padding="16,8"
+                                           Icon="{ui:SymbolIcon Brain24}"
+                                           Command="{Binding TestLlmObsAndPromptCommand}"
+                                           ToolTip="测试ReplayBuffer和Prompt构建，打印时间戳和Prompt信息" />
+                                <ui:Button Content="触发器测试"
+                                           Margin="0,0,12,0"
+                                           Padding="16,8"
+                                           Icon="{ui:SymbolIcon Flash24}"
+                                           Command="{Binding TestLlmTriggersCommand}"
+                                           ToolTip="测试LLM调度触发器和动作执行流程" />
+                            </StackPanel>
+
+                            <!-- 第四行：LLM API和完整测试 -->
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="API调用测试"
+                                           Margin="0,0,12,0"
+                                           Padding="16,8"
+                                           Icon="{ui:SymbolIcon Globe24}"
+                                           Command="{Binding TestLlmApiCallCommand}"
+                                           ToolTip="测试LLM API连接和调用功能" />
+                                <ui:Button Content="完整测试"
+                                           Margin="0,0,12,0"
+                                           Padding="16,8"
+                                           Icon="{ui:SymbolIcon CheckmarkCircle24}"
+                                           Command="{Binding TestLlmCompleteCommand}"
+                                           ToolTip="完整的LLM调度器流程测试，验证整个pipeline" />
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>

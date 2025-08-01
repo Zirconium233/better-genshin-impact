@@ -200,7 +200,15 @@ public class AIEnvTask : ISoloTask
             return "未启动";
         }
 
-        return _aiEnv.IsRunning ? "运行中" : "已停止";
+        return _scheduler.GetStatus();
+    }
+
+    /// <summary>
+    /// 获取调度器实例
+    /// </summary>
+    public IAgentScheduler? GetScheduler()
+    {
+        return _scheduler;
     }
 
     /// <summary>

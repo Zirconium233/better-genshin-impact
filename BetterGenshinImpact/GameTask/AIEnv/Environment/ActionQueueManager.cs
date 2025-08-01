@@ -389,17 +389,17 @@ public class ActionQueueManager
     {
         var actionTypeLower = actionType.ToLower();
 
-        // 瞬时动作，不需要持续时间
+        // 即时动作，统一设为200ms
         if (actionTypeLower == "moveby" || actionTypeLower == "sw" ||
             actionTypeLower == "jump" || actionTypeLower == "f" || actionTypeLower == "t")
         {
-            return 0.0; // 瞬时动作
+            return 0.2; // 即时动作，200ms
         }
 
         var defaultDuration = actionTypeLower switch
         {
             "w" or "a" or "s" or "d" => 0.1,   // 移动默认0.1秒
-            "attack" => 0.0,                   // attack默认为即时动作（基于次数）
+            "attack" => 0.2,                   // attack默认200ms（单次攻击）
             "charge" => 0.3,                   // 重击默认0.3秒
             "e" => 0.1,                        // 技能默认0.1秒
             "q" => 0.1,                        // 大招默认0.1秒
@@ -424,8 +424,20 @@ public class ActionQueueManager
                     return attackDuration;
                 }
             }
-            // 基于次数的attack(2) - 即时动作
-            return 0.0;
+            else
+            {
+                // 基于次数的attack(2) - 计算实际持续时间
+                if (int.TryParse(parameter, out var attackCount))
+                {
+                    // 每次攻击200ms，最后一次不需要等待间隔
+                    // 所以总时间 = (次数 - 1) * 200ms + 单次攻击时间(~50ms)
+                    // 简化为: 次数 * 200ms，因为最后一次攻击也需要一定时间完成
+                    var totalMs = Math.Max(1, Math.Min(attackCount, 10)) * 200;
+                    return totalMs / 1000.0; // 转换为秒
+                }
+            }
+            // 默认单次攻击
+            return 0.2; // 200ms
         }
 
         // 解析数值参数（秒）

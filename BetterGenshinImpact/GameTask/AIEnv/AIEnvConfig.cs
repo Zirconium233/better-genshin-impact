@@ -43,6 +43,12 @@ public partial class AIEnvConfig : ObservableValidator
     private string _callTriggerType = "ActionGroupCompleted";
 
     /// <summary>
+    /// 结束触发器类型
+    /// </summary>
+    [ObservableProperty]
+    private string _endTriggerType = "LlmExit";
+
+    /// <summary>
     /// 结束触发器 - LLM exit指令
     /// </summary>
     [ObservableProperty]
@@ -118,4 +124,6 @@ public partial class AIEnvConfig : ObservableValidator
     [ObservableProperty]
     [Range(1, 10)]
     private int _maxRetryCount = 3;
+
+
 }

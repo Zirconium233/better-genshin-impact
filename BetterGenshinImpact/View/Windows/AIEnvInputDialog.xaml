@@ -24,7 +24,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <ui:TitleBar Title="AI环境 - 人工调度器" Grid.Row="0">
+        <ui:TitleBar Title="AI环境 - LLM调度器配置" Grid.Row="0">
             <ui:TitleBar.Icon>
                 <ui:ImageIcon Source="pack://application:,,,/Resources/Images/logo.png" />
             </ui:TitleBar.Icon>
