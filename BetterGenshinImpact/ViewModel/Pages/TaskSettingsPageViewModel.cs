@@ -28,22 +28,28 @@ using BetterGenshinImpact.GameTask.AIEnv.Environment;
 using Microsoft.Extensions.Logging;
 using BetterGenshinImpact.Helpers;
 using Wpf.Ui;
-using Wpf.Ui.Controls;
 using Wpf.Ui.Violeta.Controls;
 using BetterGenshinImpact.ViewModel.Pages.View;
 using System.Linq;
 using System.Reflection;
 using System.Collections.Frozen;
 using System.Diagnostics;
+using System.Windows;
+using System.Windows.Controls;
 using BetterGenshinImpact.GameTask.AutoArtifactSalvage;
 using BetterGenshinImpact.GameTask.AutoStygianOnslaught;
 using BetterGenshinImpact.View.Windows;
 using BetterGenshinImpact.GameTask.GetGridIcons;
 using BetterGenshinImpact.GameTask.Model.GameUI;
+<<<<<<< HEAD
 using BetterGenshinImpact.GameTask.DataCollector;
 using BetterGenshinImpact.Model;
 using System.Windows.Forms;
 using Fischless.HotkeyCapture;
+=======
+using BetterGenshinImpact.GameTask.UseRedeemCode;
+using TextBox = Wpf.Ui.Controls.TextBox;
+>>>>>>> b74e7c4131e310f19ef7fffccd9aa0a27f8b57b9
 
 namespace BetterGenshinImpact.ViewModel.Pages;
 
@@ -176,6 +182,13 @@ public partial class TaskSettingsPageViewModel : ViewModel
                 .GetField(e.ToString())?
                 .GetCustomAttribute<DescriptionAttribute>()?
                 .Description ?? e.ToString());
+    
+    
+    [ObservableProperty]
+    private bool _switchAutoRedeemCodeEnabled;
+
+    [ObservableProperty]
+    private string _switchAutoRedeemCodeButtonText = "启动";
 
     // AI数据采集器相关属性
     [ObservableProperty]
@@ -582,7 +595,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
         try
         {
             SwitchGetGridIconsEnabled = true;
-            await new TaskRunner().RunSoloTaskAsync(new GetGridIconsTask(Config.GetGridIconsConfig.GridName, Config.GetGridIconsConfig.MaxNumToGet));
+            await new TaskRunner().RunSoloTaskAsync(new GetGridIconsTask(Config.GetGridIconsConfig.GridName, Config.GetGridIconsConfig.StarAsSuffix, Config.GetGridIconsConfig.MaxNumToGet));
         }
         finally
         {
@@ -591,7 +604,7 @@ public partial class TaskSettingsPageViewModel : ViewModel
     }
 
     [RelayCommand]
-    private void OnGoToGridIconsFolder()
+    private void OnGoToGetGridIconsFolder()
     {
         var path = Global.Absolute(@"log\gridIcons\");
         if (!Directory.Exists(path))
@@ -1580,4 +1593,49 @@ public partial class TaskSettingsPageViewModel : ViewModel
     }
 
     #endregion
+    [RelayCommand]
+    private async Task OnGoToGetGridIconsUrlAsync()
+    {
+        await Launcher.LaunchUriAsync(new Uri("https://bettergi.com/feats/task/getGridIcons.html"));
+    }
+    
+    [RelayCommand]
+    private async Task OnSwitchAutoRedeemCode()
+    {
+        var multilineTextBox = new TextBox
+        {
+            TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = true,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            PlaceholderText = "请在此输入兑换码，每行一条记录"
+        };
+        var p = new PromptDialog(
+            "输入兑换码",
+            "自动使用兑换码",
+            multilineTextBox,
+            null);
+        p.Height = 500;
+        p.ShowDialog();
+        if (p.DialogResult == true && !string.IsNullOrWhiteSpace(multilineTextBox.Text))
+        { 
+            char[] separators = ['\r', '\n'];
+                 var codes = multilineTextBox.Text.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+
+                .Select(code => code.Trim())
+                .Where(code => !string.IsNullOrEmpty(code))
+                .ToList();
+
+            if (codes.Count == 0)
+            {
+                Toast.Warning("没有有效的兑换码");
+                return;
+            }
+            
+            SwitchAutoRedeemCodeEnabled = true;
+            await new TaskRunner()
+                .RunSoloTaskAsync(new UseRedemptionCodeTask(codes));
+            SwitchAutoRedeemCodeEnabled = false;
+        }
+    }
 }
